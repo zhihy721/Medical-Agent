@@ -1,0 +1,88 @@
+{
+  "version": "0.2.0",
+  "description": "中医问诊与脉诊手融合知识库 schema 示例，当前不包含舌诊链路",
+  "term_normalization": [
+    {
+      "canonical": "恶寒",
+      "aliases": ["怕冷", "发冷", "畏寒"],
+      "category": "cold_heat"
+    },
+    {
+      "canonical": "纳差",
+      "aliases": ["没胃口", "食欲差", "吃不下"],
+      "category": "appetite"
+    }
+  ],
+  "inquiry_slots": [
+    {
+      "slot": "cold_heat",
+      "label": "寒热倾向",
+      "diagnosis_group": "问",
+      "examples": ["恶寒", "发热", "寒热往来", "怕热"]
+    },
+    {
+      "slot": "stool_urine",
+      "label": "二便情况",
+      "diagnosis_group": "问",
+      "examples": ["便溏", "便秘", "尿黄", "尿清长"]
+    },
+    {
+      "slot": "pulse_summary",
+      "label": "脉诊结论",
+      "diagnosis_group": "切",
+      "source": "pulse_device",
+      "examples": ["浮", "滑", "弦", "细", "数", "沉"]
+    }
+  ],
+  "chief_complaint_followup": [
+    {
+      "chief_complaint": "咳嗽",
+      "priority_slots": ["cold_heat", "sweating", "thirst"]
+    },
+    {
+      "chief_complaint": "腹痛",
+      "priority_slots": ["pain_character", "appetite", "stool_urine", "cold_heat"]
+    }
+  ],
+  "syndrome_rules": [
+    {
+      "name": "风寒束表",
+      "required_any": ["恶寒", "无汗", "脉浮"],
+      "related_symptoms": ["咳嗽", "头痛"]
+    },
+    {
+      "name": "肝郁气滞",
+      "required_any": ["胀痛", "易怒", "脉弦"],
+      "related_symptoms": ["胸痛", "腹痛"]
+    }
+  ],
+  "pulse_device_fields": [
+    {
+      "field": "pulse_summary",
+      "type": "string",
+      "required": true
+    },
+    {
+      "field": "pulse_signal_quality",
+      "type": "string",
+      "required": false
+    },
+    {
+      "field": "pulse_candidates",
+      "type": "string[]",
+      "required": false
+    }
+  ],
+  "red_flags": [
+    {
+      "label": "胸痛伴呼吸困难",
+      "disposition": "立即急诊",
+      "priority": "HIGH"
+    },
+    {
+      "label": "意识障碍",
+      "disposition": "立即急诊",
+      "priority": "HIGH"
+    }
+  ]
+}

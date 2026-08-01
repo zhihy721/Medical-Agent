@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Agent Demo</title>
+    <style>
+        :root {
+            --bg: #f4efe6;
+            --panel: #fffaf3;
+            --ink: #1f2937;
+            --muted: #6b7280;
+            --brand: #0f766e;
+            --brand-soft: #dff5f2;
+            --accent: #b45309;
+            --border: #e5dccd;
+            --danger: #b91c1c;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Segoe UI", "PingFang SC", sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, #fef3c7 0, transparent 32%),
+                radial-gradient(circle at bottom right, #ccfbf1 0, transparent 28%),
+                var(--bg);
+            min-height: 100vh;
+        }
+
+        .layout {
+            width: min(1180px, calc(100% - 32px));
+            margin: 24px auto;
+            display: grid;
+            grid-template-columns: 1.6fr 1fr;
+            gap: 20px;
+        }
+
+        .panel {
+            background: rgba(255, 250, 243, 0.92);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            box-shadow: 0 18px 40px rgba(31, 41, 55, 0.08);
+            backdrop-filter: blur(8px);
+        }
+
+        .chat-panel {
+            display: flex;
+            flex-direction: column;
+            min-height: 82vh;
+        }
+
+        .hero {
+            padding: 24px 24px 12px;
+        }
+
+        .hero h1 {
+            margin: 0 0 8px;
+            font-size: 30px;
+        }
+
+        .hero p {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .chat-messages {
+            flex: 1;
+            margin: 12px 24px;
+            padding: 12px;
+            overflow-y: auto;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 18px;
+        }
+
+        .message {
+            margin-bottom: 14px;
+            padding: 14px 16px;
+            border-radius: 18px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            animation: fadeUp 0.25s ease;
+        }
+
+        .message.user {
+            margin-left: auto;
+            max-width: 74%;
+            background: linear-gradient(135deg, #0f766e, #115e59);
+            color: white;
+        }
+
+        .message.bot {
+            max-width: 82%;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+        }
+
+        .label {
+            font-size: 12px;
+            color: inherit;
+            opacity: 0.7;
+            margin-bottom: 6px;
+        }
+
+        .composer {
+            padding: 0 24px 24px;
+        }
+
+        .composer-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .quick-picks {
+            display: none;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .quick-picks.visible {
+            display: flex;
+        }
+
+        .pick-btn {
+            padding: 10px 14px;
+            border-radius: 999px;
+            border: 1px solid #b7e4de;
+            background: var(--brand-soft);
+            color: var(--brand);
+            font-size: 14px;
+            cursor: pointer;
+            transition: transform 0.15s ease, background 0.15s ease;
+        }
+
+        .pick-btn:hover {
+            transform: translateY(-1px);
+            background: #c9efea;
+        }
+
+        .pick-hint {
+            width: 100%;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        input {
+            flex: 1;
+            padding: 14px 16px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            font-size: 15px;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: var(--brand);
+            box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
+        }
+
+        button {
+            border: none;
+            border-radius: 16px;
+            padding: 14px 18px;
+            font-size: 15px;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+        }
+
+        .primary {
+            color: white;
+            background: linear-gradient(135deg, #0f766e, #0d9488);
+            box-shadow: 0 10px 20px rgba(13, 148, 136, 0.22);
+        }
+
+        .secondary {
+            color: var(--ink);
+            background: #efe4d4;
+        }
+
+        .side-panel {
+            padding: 24px;
+        }
+
+        .side-panel h2 {
+            margin-top: 0;
+            font-size: 20px;
+        }
+
+        .card {
+            padding: 16px;
+            border-radius: 18px;
+            border: 1px solid var(--border);
+            background: white;
+            margin-bottom: 14px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+
+        .chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .chip {
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: var(--brand-soft);
+            color: var(--brand);
+            font-size: 13px;
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        .risk-high, .llm-off {
+            color: var(--danger);
+        }
+
+        .risk-medium {
+            color: var(--accent);
+        }
+
+        .risk-low, .llm-on {
+            color: var(--brand);
+        }
+
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @media (max-width: 900px) {
+            .layout {
+                grid-template-columns: 1fr;
+            }
+
+            .chat-panel {
+                min-height: 70vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <section class="panel chat-panel">
+            <div class="hero">
+                <h1>智能问诊 Agent 演示</h1>
+                <p>这是一个面向面试展示的多轮分诊原型，重点演示结构化信息抽取、状态管理、动态追问和 LLM 接入状态。</p>
+            </div>
+
+            <div id="chat-messages" class="chat-messages">
+                <div class="message bot">
+                    <div class="label">Medical Agent</div>
+                    你好，我会先收集你的主要症状，再根据缺失信息继续追问，最后给出分诊建议。请先描述当前最明显的不适。
+                </div>
+            </div>
+
+            <div class="composer">
+                <div id="quick-picks" class="quick-picks">
+                    <div class="pick-hint">如果你不确定怎么描述，可以直接点一个常见症状：</div>
+                    <button class="pick-btn" data-text="我发热了">发热</button>
+                    <button class="pick-btn" data-text="我一直咳嗽">咳嗽</button>
+                    <button class="pick-btn" data-text="我胸口痛">胸痛</button>
+                    <button class="pick-btn" data-text="我肚子痛">腹痛</button>
+                    <button class="pick-btn" data-text="我头痛">头痛</button>
+                    <button class="pick-btn" data-text="我呼吸有点困难">呼吸困难</button>
+                </div>
+
+                <div class="composer-row">
+                    <input id="message-input" type="text" maxlength="500" placeholder="例如：我发烧两天了，还咳嗽，胸口有点闷">
+                    <button id="send-btn" class="primary">发送</button>
+                    <button id="reset-btn" class="secondary">重置</button>
+                </div>
+            </div>
+        </section>
+
+        <aside class="panel side-panel">
+            <h2>Case State</h2>
+            <div class="card">
+                <div class="card-title">LLM 运行状态</div>
+                <div id="llm-provider" class="muted">provider: loading</div>
+                <div id="llm-config" class="muted">deepseek configured: loading</div>
+                <div id="llm-runtime" class="muted">last used: loading</div>
+            </div>
+            <div class="card">
+                <div class="card-title">当前状态</div>
+                <div id="status-text" class="muted">INIT</div>
+            </div>
+            <div class="card">
+                <div class="card-title">已识别症状</div>
+                <div id="symptom-chips" class="chips">
+                    <span class="muted">暂无</span>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">缺失字段</div>
+                <div id="missing-slots" class="chips">
+                    <span class="muted">暂无</span>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">最近追问字段</div>
+                <div id="last-followup" class="muted">暂无</div>
+            </div>
+            <div class="card">
+                <div class="card-title">风险等级</div>
+                <div id="risk-level" class="muted">UNKNOWN</div>
+            </div>
+            <div class="card">
+                <div class="card-title">结构化摘要</div>
+                <div id="case-summary" class="muted">等待输入</div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById("chat-messages");
+        const messageInput = document.getElementById("message-input");
+        const sendBtn = document.getElementById("send-btn");
+        const resetBtn = document.getElementById("reset-btn");
+        const quickPicks = document.getElementById("quick-picks");
+
+        function addMessage(text, type) {
+            const node = document.createElement("div");
+            node.className = `message ${type}`;
+            node.innerHTML = `
+                <div class="label">${type === "user" ? "User" : "Medical Agent"}</div>
+                ${text.replace(/\n/g, "<br>")}
+            `;
+            chatMessages.appendChild(node);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function renderChips(targetId, values) {
+            const container = document.getElementById(targetId);
+            container.innerHTML = "";
+            if (!values || values.length === 0) {
+                container.innerHTML = '<span class="muted">暂无</span>';
+                return;
+            }
+
+            values.forEach(value => {
+                const chip = document.createElement("span");
+                chip.className = "chip";
+                chip.textContent = value;
+                container.appendChild(chip);
+            });
+        }
+
+        function renderLlmStatus(llmStatus) {
+            const provider = document.getElementById("llm-provider");
+            const config = document.getElementById("llm-config");
+            const runtime = document.getElementById("llm-runtime");
+
+            provider.textContent = `provider: ${llmStatus?.configured_provider || "unknown"}`;
+            config.textContent = `deepseek configured: ${String(Boolean(llmStatus?.deepseek_configured))}`;
+            runtime.textContent = `last used: ${llmStatus?.last_provider_used || "unknown"}`;
+            runtime.className = llmStatus?.last_provider_used === "deepseek" ? "llm-on" : "llm-off";
+        }
+
+        function renderQuickPicks(caseState) {
+            const shouldShow = !caseState?.chief_complaint && caseState?.last_followup_slot === "chief_complaint";
+            quickPicks.classList.toggle("visible", Boolean(shouldShow));
+        }
+
+        function renderCaseState(caseState) {
+            if (!caseState) {
+                return;
+            }
+
+            document.getElementById("status-text").textContent = caseState.status || "INIT";
+            renderChips("symptom-chips", caseState.symptoms || []);
+            renderChips("missing-slots", caseState.missing_slots || []);
+            document.getElementById("last-followup").textContent = caseState.last_followup_slot || "暂无";
+
+            const riskLevel = document.getElementById("risk-level");
+            const level = caseState.risk_level || "UNKNOWN";
+            riskLevel.textContent = level;
+            riskLevel.className = "";
+            if (level === "HIGH") {
+                riskLevel.classList.add("risk-high");
+            } else if (level === "MEDIUM") {
+                riskLevel.classList.add("risk-medium");
+            } else if (level === "LOW") {
+                riskLevel.classList.add("risk-low");
+            } else {
+                riskLevel.classList.add("muted");
+            }
+
+            document.getElementById("case-summary").textContent = caseState.summary || "等待输入";
+            renderLlmStatus(caseState.llm_status || {});
+            renderQuickPicks(caseState);
+        }
+
+        async function loadStatus() {
+            try {
+                const response = await fetch("/status");
+                const data = await response.json();
+                renderCaseState(data.case_state);
+            } catch (error) {
+                renderLlmStatus({
+                    configured_provider: "unknown",
+                    deepseek_configured: false,
+                    last_provider_used: "mock"
+                });
+            }
+        }
+
+        async function sendMessage(prefilledText = null) {
+            const message = (prefilledText ?? messageInput.value).trim();
+            if (!message) {
+                return;
+            }
+
+            addMessage(message, "user");
+            messageInput.value = "";
+
+            try {
+                const response = await fetch("/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message })
+                });
+                const data = await response.json();
+                addMessage(data.response, "bot");
+                renderCaseState(data.case_state);
+            } catch (error) {
+                addMessage("请求失败，请稍后再试。", "bot");
+            }
+        }
+
+        async function resetChat() {
+            try {
+                const response = await fetch("/reset", { method: "POST" });
+                const data = await response.json();
+                chatMessages.innerHTML = `
+                    <div class="message bot">
+                        <div class="label">Medical Agent</div>
+                        你好，我会先收集你的主要症状，再根据缺失信息继续追问，最后给出分诊建议。请先描述当前最明显的不适。
+                    </div>
+                `;
+                renderCaseState(data.case_state);
+            } catch (error) {
+                await loadStatus();
+            }
+        }
+
+        sendBtn.addEventListener("click", () => sendMessage());
+        resetBtn.addEventListener("click", resetChat);
+        messageInput.addEventListener("keydown", event => {
+            if (event.key === "Enter") {
+                sendMessage();
+            }
+        });
+
+        quickPicks.addEventListener("click", event => {
+            const button = event.target.closest(".pick-btn");
+            if (!button) {
+                return;
+            }
+            sendMessage(button.dataset.text || "");
+        });
+
+        loadStatus();
+        messageInput.focus();
+    </script>
+</body>
+</html>
