@@ -5,6 +5,8 @@ import json
 import os
 import re
 
+from config_manager import apply_config_to_environment
+
 try:
     import requests
 except ImportError:
@@ -20,18 +22,7 @@ class LLM:
         self._load_config()
 
     def _load_config(self):
-        config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.env")
-        if not os.path.exists(config_file):
-            return
-
-        with open(config_file, "r", encoding="utf-8") as file:
-            for line in file:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                if value and not os.getenv(key.strip()):
-                    os.environ[key.strip()] = value.strip()
+        apply_config_to_environment()
 
     def is_deepseek_configured(self):
         return bool(os.getenv("DEEPSEEK_API_URL") and os.getenv("DEEPSEEK_API_KEY"))
