@@ -14,8 +14,8 @@ from config_manager import (
 from llm.llm import LLM
 from llm.prompt import SYSTEM_PROMPT
 from memory.memory import ConversationMemory
-from memory.profile_store import InMemoryProfileStore
-from memory.session_store import InMemorySessionStore
+from memory.profile_store import InMemoryProfileStore, JsonFileProfileStore
+from memory.session_store import InMemorySessionStore, JsonFileSessionStore
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "medical-agent-demo-secret")
@@ -24,8 +24,11 @@ apply_config_to_environment()
 llm = LLM(system_prompt=SYSTEM_PROMPT)
 agent_sessions = {}
 agent_runtime = get_agent_runtime()
-profile_store = InMemoryProfileStore()
-session_store = InMemorySessionStore()
+
+_config = read_config()
+_data_dir = _config.get("DATA_DIR", "data")
+profile_store = JsonFileProfileStore(data_dir=f"{_data_dir}/profiles")
+session_store = JsonFileSessionStore(data_dir=f"{_data_dir}/sessions")
 
 
 def _reload_runtime():

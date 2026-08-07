@@ -1,4 +1,7 @@
 from copy import deepcopy
+from pathlib import Path
+
+from memory.file_store import ensure_dir, read_json_file, write_json_file
 
 
 class InMemoryProfileStore:
@@ -20,3 +23,29 @@ class InMemoryProfileStore:
 
     def set_profile(self, user_id, profile):
         self._profiles[user_id] = deepcopy(profile)
+
+
+class JsonFileProfileStore:
+    """
+    基于 JSON 文件的长期用户画像持久化存储。
+
+    每个 user_id 对应一个 JSON 文件，存储在 data_dir 目录下。
+    接口与 InMemoryProfileStore 完全一致，可互换使用。
+    服务重启后数据不丢失。
+    """
+
+    def __init__(self, data_dir="data/profiles"):
+        self._data_dir = Path(data_dir)
+        ensure_dir(self._data_dir)
+
+    def _profile_path(self, user_id):
+        return self._data_dir / f"{user_id}.json"
+
+    def get_profile(self, user_id, default_profile):
+        data = read_json_file(self._profile_path(user_id))
+        if data is None:
+            return deepcopy(default_profile)
+        return data
+
+    def set_profile(self, user_id, profile):
+        write_json_file(self._profile_path(user_id), deepcopy(profile))

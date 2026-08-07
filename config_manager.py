@@ -11,6 +11,7 @@ DEFAULT_CONFIG = {
     "DEEPSEEK_MODEL": "deepseek-chat",
     "DEEPSEEK_MAX_TOKENS": "512",
     "DEEPSEEK_TEMPERATURE": "0.2",
+    "DATA_DIR": "data",
 }
 
 PUBLIC_FIELDS = {
@@ -19,6 +20,7 @@ PUBLIC_FIELDS = {
     "DEEPSEEK_MODEL",
     "DEEPSEEK_MAX_TOKENS",
     "DEEPSEEK_TEMPERATURE",
+    "DATA_DIR",
 }
 
 
