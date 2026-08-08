@@ -44,6 +44,7 @@ from agent.runtime_utils import (
     extract_case_slots,
     handle_post_pulse_reply,
     render_response,
+    resolve_clarified_contradiction,
     serialize_action_result,
     sync_action_to_memory,
     sync_plan_to_memory,
@@ -169,6 +170,8 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
 
         extracted_slots = extract_case_slots(llm, user_input)
         memory.update_case(extracted_slots)
+        # 澄清回复后处理：用户重新确认冲突字段时以最新值为准消除矛盾
+        resolve_clarified_contradiction(memory, extracted_slots)
 
         return {
             "extracted_slots": extracted_slots,

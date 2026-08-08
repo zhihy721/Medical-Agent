@@ -135,6 +135,9 @@ def check_turn(expect, record):
         if not case_state.get(slot):
             failures.append(f"槽位 {slot} 未填充，实际值 {case_state.get(slot)!r}")
 
+    if expect.get("contradictions_empty") and case_state.get("contradictions"):
+        failures.append(f"contradictions 应为空，实际 {case_state.get('contradictions')}")
+
     for fragment in expect.get("response_contain", []):
         if fragment not in record["response"]:
             failures.append(f"response 未包含 {fragment!r}")

@@ -1,6 +1,6 @@
 {
   "id": "06_age_contradiction",
-  "description": "年龄前后矛盾时应优先澄清冲突而不是继续追问",
+  "description": "年龄前后矛盾时应优先澄清冲突；用户重新确认后矛盾应消除并恢复常规流程",
   "turns": [
     {
       "user": "我今年25岁，胃痛，肚子有点不舒服，轻度疼痛",
@@ -13,6 +13,14 @@
       "user": "说错了，我其实是65岁",
       "expect": {
         "next_action": "clarify_conflict"
+      }
+    },
+    {
+      "user": "我确实是65岁，没说错",
+      "expect": {
+        "contradictions_empty": true,
+        "next_action_any": ["ask_followup_single", "ask_followup_bundle", "request_pulse_input", "final_advice"],
+        "slots_filled": ["age"]
       }
     }
   ]

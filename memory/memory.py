@@ -311,6 +311,19 @@ class ConversationMemory:
         self.case_state["pulse_declined"] = True
         self._persist_session_state()
 
+    # 澄清完成后的矛盾消除：以最新一次确认为准，截断该字段的历史值
+    # 避免 slot_history 只追加不清理导致矛盾永久存在、对话卡在澄清环节
+    def resolve_contradiction(self, field):
+        if not field:
+            return
+        slot_history = deepcopy(self.case_state.get("slot_history", {}))
+        values = slot_history.get(field, [])
+        if len(values) > 1:
+            slot_history[field] = [values[-1]]
+            self.case_state["slot_history"] = slot_history
+        self._refresh_contradictions()
+        self._persist_session_state()
+
     # 获取当前case_state的深拷贝，确保外部无法直接修改内部状态
     def get_case_state(self):
         return deepcopy(self.case_state)

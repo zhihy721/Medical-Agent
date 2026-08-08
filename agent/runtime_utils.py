@@ -127,6 +127,16 @@ def handle_post_pulse_reply(memory, user_input):
 
     memory.mark_pulse_skipped()
 
+# 澄清回复的后处理：上一轮在澄清冲突字段，且本轮抽到了该字段的新值
+# 则以最新值为准消除矛盾，避免对话永久卡在澄清环节
+def resolve_clarified_contradiction(memory, extracted_slots):
+    case_state = memory.get_case_state()
+    if case_state.get("last_action") != "clarify_conflict":
+        return
+    field = case_state.get("last_followup_slot", "")
+    if field and extracted_slots.get(field):
+        memory.resolve_contradiction(field)
+
 # 把计划和评审结果同步到记忆里，形成稳定的状态，供LLM调用
 def sync_plan_to_memory(memory, plan, internal_step=None):
     # 写入分诊线索，供后续计划和行动调用
