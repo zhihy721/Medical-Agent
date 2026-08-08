@@ -138,10 +138,10 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
             ) from exc
         checkpointer = InMemorySaver()
 
-    # Planner：决定下一步做什么
+    # Planner：决定下一步做什么（纯规则决策，不依赖 LLM）
     # Router：把决策变成具体动作
     router = Router()
-    planner = Planner(llm)
+    planner = Planner()
 
     # 1.取case_state
     # 2.查医疗指南
@@ -419,7 +419,7 @@ class LangGraphMedicalAgent:
         self.llm = llm
         self.memory = memory
         self.max_internal_steps = max_internal_steps
-        self.planner = Planner(llm)
+        self.planner = Planner()
         self.thread_id = thread_id or getattr(memory, "session_id", None) or str(uuid.uuid4())
         self.app = build_agent_graph(
             llm=llm,

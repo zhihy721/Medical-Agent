@@ -4,8 +4,35 @@ from knowledge.tcm_knowledge import (
     FOUR_DIAGNOSIS_GROUPS,
     GENERAL_TCM_PRIORITIES,
     TCM_SLOT_LABELS,
+    get_syndrome_rule,
     infer_tcm_syndromes,
+    normalize_term,
 )
+
+# Planner 决策阈值统一配置，避免魔法数字散落各处
+# 调整策略时只改这里，不需要动决策逻辑本身
+PLANNER_CONFIG = {
+    # 置信度低于该值视为信息严重不足，即使收敛也要继续打包追问
+    "confidence_low_threshold": 0.45,
+    # 置信度达到该值视为关键信息基本齐全，可以进入最终建议
+    "confidence_ready_threshold": 0.75,
+    # 高风险且已有症状时的置信度下限
+    "high_risk_confidence_floor": 0.82,
+    # 存在信息冲突时的置信度惩罚
+    "contradiction_confidence_penalty": 0.28,
+    # 请求脉诊前问诊完整度必须达到的下限
+    "pulse_completion_min": 0.6,
+    # 请求脉诊时允许的最大缺失槽位数
+    "pulse_max_missing_slots": 2,
+    # 累计追问轮数达到该值且仍缺较多信息时，先总结进展
+    "summarize_total_followups": 3,
+    # 触发进展总结所需的最少缺失槽位数
+    "summarize_min_missing": 2,
+    # 证型得分达到该值时，其证据槽位进入定向追问加权
+    "syndrome_focus_min_score": 5,
+    # 缺失槽位达到该数量时切换打包追问
+    "bundle_min_missing": 4,
+}
 
 # 每个slot最多允许被追问多少次
 # 防止死循环追问
@@ -35,14 +62,15 @@ SLOT_ASK_LIMITS = {
 
 
 class Planner:
-    def __init__(self, llm):
-        self.llm = llm
+    # Planner 为纯规则决策器，不依赖 LLM，保证决策确定性与可测试性
+    def __init__(self):
+        pass
 
     # 根据当前的case_state，生成一个包含下一步行动建议的计划
     def create_plan(self, case_state):
         risk_level = case_state.get("risk_level") or "UNKNOWN"
         syndrome_candidates = infer_tcm_syndromes(case_state)
-        missing_slots, deferred_slots = self._missing_slots(case_state)
+        missing_slots, deferred_slots = self._missing_slots(case_state, syndrome_candidates)
         completion_score = self._completion_score(case_state)
         contradictions = case_state.get("contradictions", [])
         contradiction_fields = case_state.get("contradiction_fields", [])
@@ -92,13 +120,19 @@ class Planner:
         if action_result.name == "final_advice" and contradictions:
             suggested_action = "clarify_conflict"
             reason = "存在前后不一致信息，先澄清再给建议更稳妥。"
-        elif action_result.name == "final_advice" and missing_slots and risk_result.get("risk") != "HIGH" and confidence < 0.75:
+        elif action_result.name == "final_advice" and missing_slots and risk_result.get("risk") != "HIGH" and confidence < PLANNER_CONFIG["confidence_ready_threshold"]:
             suggested_action = "ask_followup_bundle"
             reason = "仍缺少关键四诊信息，建议继续追问而不是过早收束。"
         elif action_result.name == "request_pulse_input" and risk_result.get("risk") == "HIGH":
             suggested_action = "risk_escalation"
             reason = "高风险场景下应优先安全分诊，不能等待脉诊补充。"
-        elif action_result.name.startswith("ask_followup") and not missing_slots and confidence >= 0.75:
+        elif action_result.name.startswith("ask_followup") and risk_result.get("risk") == "HIGH":
+            suggested_action = "risk_escalation"
+            reason = "高风险场景下应优先安全分诊，不宜继续常规追问。"
+        elif action_result.name == "request_pulse_input" and plan.get("completion_score", 0) < PLANNER_CONFIG["pulse_completion_min"]:
+            suggested_action = "ask_followup_bundle"
+            reason = "问诊完整度仍较低，应先补充关键信息再考虑脉诊。"
+        elif action_result.name.startswith("ask_followup") and not missing_slots and confidence >= PLANNER_CONFIG["confidence_ready_threshold"]:
             suggested_action = "final_advice"
             reason = "关键信息已基本齐全，可以进入整理与建议阶段。"
 
@@ -112,11 +146,13 @@ class Planner:
 
     # 根据当前case_state中已收集的信息
     # 判断还缺哪些关键槽位，并根据优先级排序，返回待补充的槽位列表和可以暂缓的槽位列表
-    def _missing_slots(self, case_state):
+    # 排序规则：证型定向证据槽位优先 > 追问次数少的优先 > 原始优先级顺序
+    def _missing_slots(self, case_state, syndrome_candidates=None):
         chief_complaint = case_state.get("chief_complaint", "")
         priorities = list(GENERAL_TCM_PRIORITIES)
-        priorities.extend(CHIEF_COMPLAINT_PRIORITIES.get(chief_complaint, []))
+        priorities.extend(self._chief_complaint_priorities(chief_complaint))
         followup_counts = case_state.get("followup_counts", {})
+        boosted_slots = self._syndrome_focus_slots(syndrome_candidates or [])
 
         queue = []
         deferred = []
@@ -130,8 +166,35 @@ class Planner:
                 continue
             queue.append(slot)
 
-        sorted_queue = sorted(queue, key=lambda slot: (followup_counts.get(slot, 0), queue.index(slot)))
+        sorted_queue = sorted(
+            queue,
+            key=lambda slot: (0 if slot in boosted_slots else 1, followup_counts.get(slot, 0), queue.index(slot)),
+        )
         return sorted_queue, deferred
+
+    # 主诉模糊匹配：先术语归一，再做包含匹配，替代精确查表
+    # 用户主诉是自由文本（如“咳嗽得厉害”），精确匹配经常落空
+    def _chief_complaint_priorities(self, chief_complaint):
+        normalized = normalize_term((chief_complaint or "").strip())
+        if not normalized:
+            return []
+        matched = []
+        for key, slots in CHIEF_COMPLAINT_PRIORITIES.items():
+            if key and (key in normalized or normalized in key):
+                matched.extend(slots)
+        return matched
+
+    # 证型定向追问：高置信证型（score 达标）所需的证据槽位优先补充
+    # 让追问朝辨证方向收敛，而不是只按通用顺序问
+    def _syndrome_focus_slots(self, syndrome_candidates):
+        boosted = set()
+        for candidate in syndrome_candidates:
+            if candidate.get("score", 0) < PLANNER_CONFIG["syndrome_focus_min_score"]:
+                continue
+            rule = get_syndrome_rule(candidate.get("name", ""))
+            if rule:
+                boosted.update(rule.get("evidence", {}).keys())
+        return boosted
 
     # 把缺失的信息映射到中医四诊结构
     def _build_four_diagnosis_focus(self, missing_slots):
@@ -152,7 +215,7 @@ class Planner:
             return "pattern_summary"
         return missing_slots[0]
 
-    #
+    # 下一步行动决策：安全 > 冲突 > 补缺 > 脉诊 > 收束
     def _decide_next_action(self, case_state, missing_slots, risk_level, contradictions, confidence, followup_mode):
         if risk_level == "HIGH":
             return "risk_escalation"
@@ -160,14 +223,14 @@ class Planner:
             return "clarify_conflict"
         if missing_slots:
             total_followups = sum(case_state.get("followup_counts", {}).values())
-            if total_followups >= 3 and len(missing_slots) >= 2:
+            if total_followups >= PLANNER_CONFIG["summarize_total_followups"] and len(missing_slots) >= PLANNER_CONFIG["summarize_min_missing"]:
                 return "summarize_progress"
             if followup_mode == "bundle":
                 return "ask_followup_bundle"
             return "ask_followup_single"
         if self._should_request_pulse(case_state, risk_level, self._completion_score(case_state), missing_slots):
             return "request_pulse_input"
-        if confidence < 0.45:
+        if confidence < PLANNER_CONFIG["confidence_low_threshold"]:
             return "ask_followup_bundle"
         return "final_advice"
 
@@ -179,7 +242,7 @@ class Planner:
         first_slot = missing_slots[0]
         repeated_attempts = followup_counts.get(first_slot, 0)
 
-        if repeated_attempts >= 2 or len(missing_slots) >= 4:
+        if repeated_attempts >= 2 or len(missing_slots) >= PLANNER_CONFIG["bundle_min_missing"]:
             return "bundle"
         return "single"
 
@@ -187,13 +250,13 @@ class Planner:
     def _confidence(self, case_state, risk_level, completion_score, contradictions):
         confidence = completion_score
         if risk_level == "HIGH" and case_state.get("symptoms"):
-            confidence = max(confidence, 0.82)
+            confidence = max(confidence, PLANNER_CONFIG["high_risk_confidence_floor"])
         if case_state.get("pulse_summary"):
             confidence += 0.08
         if not case_state.get("chief_complaint"):
             confidence -= 0.12
         if contradictions:
-            confidence -= 0.28
+            confidence -= PLANNER_CONFIG["contradiction_confidence_penalty"]
         return round(min(max(confidence, 0.05), 0.95), 2)
 
     # 判断是否满足请求补充脉诊输入的条件
@@ -206,9 +269,9 @@ class Planner:
             return False
         if case_state.get("pulse_prompt_count", 0) >= 1:
             return False
-        if completion_score < 0.6:
+        if completion_score < PLANNER_CONFIG["pulse_completion_min"]:
             return False
-        return len(missing_slots) <= 2
+        return len(missing_slots) <= PLANNER_CONFIG["pulse_max_missing_slots"]
 
     # 根据当前的case_state和计划中的下一步行动
     # 构建一个合理的行动理由，帮助用户理解为什么要这么做

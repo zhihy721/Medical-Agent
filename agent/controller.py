@@ -47,7 +47,7 @@ class MedicalAgent:
         self.llm = llm
         self.memory = memory
         self.router = Router()
-        self.planner = Planner(llm)
+        self.planner = Planner()
 
     def run(self, user_input):
         self.memory.add_user(user_input)
