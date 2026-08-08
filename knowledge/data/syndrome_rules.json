@@ -1,0 +1,176 @@
+{
+  "version": "1.0.0",
+  "description": "中医辨证规则知识库。内容为演示级，基于常见中医教材常识整理，需经中医专业审核后方可用于实际场景。",
+  "rules": [
+    {
+      "name": "风寒束表",
+      "evidence": {
+        "cold_heat": ["恶寒"],
+        "sweating": ["无汗"],
+        "pulse_summary": ["浮紧", "浮"]
+      },
+      "symptoms": {"symptoms": ["咳嗽", "头痛"], "accompanying_symptoms": ["寒战"]},
+      "treatment_principle": "辛温解表，宣肺散寒",
+      "lifestyle_advice": ["注意保暖避风，适当休息", "可少量温热水或姜汤助汗出", "避免生冷油腻饮食"]
+    },
+    {
+      "name": "风热犯肺",
+      "evidence": {
+        "cold_heat": ["发热"],
+        "thirst": ["口渴"]
+      },
+      "symptoms": {"symptoms": ["咳嗽", "咽痛"]},
+      "treatment_principle": "辛凉解表，宣肺清热",
+      "lifestyle_advice": ["多饮温水，注意休息", "饮食清淡，避免辛辣刺激与煎炸食物", "保持室内通风，温湿度适宜"]
+    },
+    {
+      "name": "痰热壅肺",
+      "evidence": {
+        "thirst": ["口渴"],
+        "pulse_summary": ["滑数", "滑"]
+      },
+      "symptoms": {"symptoms": ["咳嗽", "呼吸困难"], "accompanying_symptoms": ["胸闷"]},
+      "treatment_principle": "清肺化痰，止咳平喘",
+      "lifestyle_advice": ["避免甜腻厚味助湿生痰", "远离烟尘与粉尘刺激", "若咳喘加重或发热不退应及时就医"]
+    },
+    {
+      "name": "脾胃虚寒",
+      "evidence": {
+        "cold_heat": ["怕冷", "喜温"],
+        "appetite": ["纳差"],
+        "stool_urine": ["便溏"]
+      },
+      "symptoms": {"symptoms": ["腹痛", "腹泻"]},
+      "treatment_principle": "温中健脾，散寒止痛",
+      "lifestyle_advice": ["规律进食，少食多餐，以温热易消化为主", "腹部注意保暖，可适当热敷", "避免冰饮、生冷瓜果等寒凉食物"]
+    },
+    {
+      "name": "肝郁气滞",
+      "evidence": {
+        "emotion": ["焦虑", "易怒", "抑郁"],
+        "pain_character": ["胀痛"],
+        "pulse_summary": ["弦"]
+      },
+      "symptoms": {"symptoms": ["胸痛", "腹痛"]},
+      "treatment_principle": "疏肝理气，解郁止痛",
+      "lifestyle_advice": ["保持情绪舒畅，避免熬夜", "适当散步或舒展运动帮助放松", "减少浓茶、咖啡等刺激性饮品"]
+    },
+    {
+      "name": "气血两虚",
+      "evidence": {
+        "sleep": ["失眠"],
+        "appetite": ["纳差"],
+        "pulse_summary": ["细弱", "细"]
+      },
+      "symptoms": {"symptoms": ["乏力", "头晕"]},
+      "treatment_principle": "益气养血，健脾养心",
+      "lifestyle_advice": ["劳逸结合，保证睡眠，避免过劳", "饮食可适度加入山药、大枣等平补之品", "头晕明显或持续加重时应线下评估"]
+    },
+    {
+      "name": "湿阻中焦",
+      "evidence": {
+        "appetite": ["纳差"],
+        "stool_urine": ["便溏"],
+        "thirst": ["不渴"]
+      },
+      "symptoms": {"symptoms": ["乏力", "恶心"], "accompanying_symptoms": ["食欲下降"]},
+      "treatment_principle": "芳香化湿，和中健脾",
+      "lifestyle_advice": ["饮食清淡易消化，少食甜腻生冷", "避免久居潮湿环境", "适度运动帮助气机流通"]
+    },
+    {
+      "name": "阴虚内热",
+      "evidence": {
+        "sweating": ["盗汗"],
+        "thirst": ["口渴"],
+        "pulse_summary": ["细数", "细"]
+      },
+      "symptoms": {"symptoms": ["乏力", "头晕"]},
+      "treatment_principle": "滋阴清热，生津润燥",
+      "lifestyle_advice": ["早睡不熬夜，忌辛辣刺激", "少量多次补充温水，可食梨、银耳等润燥之品", "盗汗明显伴消瘦时应尽早线下评估"]
+    },
+    {
+      "name": "肾阳虚",
+      "evidence": {
+        "cold_heat": ["怕冷", "喜温"],
+        "stool_urine": ["小便清长"],
+        "pulse_summary": ["沉迟", "沉"]
+      },
+      "symptoms": {"symptoms": ["乏力"]},
+      "treatment_principle": "温补肾阳",
+      "lifestyle_advice": ["注意保暖，避免受寒", "劳逸有度，避免过度劳累", "晚间可温水泡脚帮助温通"]
+    },
+    {
+      "name": "心脾两虚",
+      "evidence": {
+        "sleep": ["失眠", "多梦"],
+        "appetite": ["纳差"]
+      },
+      "symptoms": {"symptoms": ["心悸", "乏力"]},
+      "treatment_principle": "补益心脾，养血安神",
+      "lifestyle_advice": ["规律作息，避免思虑过度与熬夜", "饮食以温热、易消化为主", "心悸明显或伴胸闷时应线下评估"]
+    },
+    {
+      "name": "肝胆湿热",
+      "evidence": {
+        "emotion": ["烦躁", "易怒"],
+        "stool_urine": ["小便黄"],
+        "pain_character": ["胀痛"]
+      },
+      "symptoms": {"symptoms": ["腹痛", "恶心"]},
+      "treatment_principle": "清利肝胆湿热",
+      "lifestyle_advice": ["忌酒及辛辣油腻食物", "作息规律，保持情绪平稳", "出现皮肤或眼睛发黄时应及时就医"]
+    },
+    {
+      "name": "食滞胃脘",
+      "evidence": {
+        "appetite": ["纳差"],
+        "pain_character": ["拒按"]
+      },
+      "symptoms": {"symptoms": ["腹痛", "恶心", "呕吐"], "accompanying_symptoms": ["食欲下降"]},
+      "treatment_principle": "消食导滞，和胃降逆",
+      "lifestyle_advice": ["暂时减量进食，以粥面等易消化食物为主", "避免油腻与不易消化的食物", "呕吐频繁或伴便血黑便时应及时就医"]
+    },
+    {
+      "name": "瘀血阻络",
+      "evidence": {
+        "pain_character": ["刺痛", "拒按"],
+        "pulse_summary": ["涩"]
+      },
+      "symptoms": {"symptoms": ["胸痛", "头痛"]},
+      "treatment_principle": "活血化瘀，通络止痛",
+      "lifestyle_advice": ["避免受寒，适度轻柔活动", "胸痛或头痛突然加重时应立即就医", "不要自行服用活血化瘀类药物"]
+    },
+    {
+      "name": "肺气虚",
+      "evidence": {
+        "sweating": ["自汗"],
+        "voice_breath": ["气短懒言"],
+        "pulse_summary": ["细弱", "细"]
+      },
+      "symptoms": {"symptoms": ["咳嗽", "乏力"]},
+      "treatment_principle": "补益肺气，固表止汗",
+      "lifestyle_advice": ["避风寒，注意预防感冒", "适当练习缓慢深呼吸", "劳逸结合，避免过度疲劳"]
+    },
+    {
+      "name": "胃阴不足",
+      "evidence": {
+        "thirst": ["口渴"],
+        "pain_character": ["隐痛"],
+        "stool_urine": ["便秘"]
+      },
+      "symptoms": {"symptoms": ["腹痛", "恶心"]},
+      "treatment_principle": "养阴益胃，生津润燥",
+      "lifestyle_advice": ["少食多餐，食物温软为宜", "避免辛辣香燥与煎炸食物", "可食山药、银耳等滋养胃阴"]
+    },
+    {
+      "name": "寒凝心脉",
+      "evidence": {
+        "cold_heat": ["怕冷", "恶寒"],
+        "pulse_summary": ["沉迟", "沉"]
+      },
+      "symptoms": {"symptoms": ["胸痛", "胸闷"]},
+      "treatment_principle": "温通心阳，散寒止痛",
+      "lifestyle_advice": ["保暖避寒，寒冷天气减少外出", "胸痛持续不缓解或伴呼吸困难应立即急诊", "避免情绪激动与过度劳累"]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 {
   "version": "0.2.0",
-  "description": "中医问诊与脉诊手融合知识库 schema 示例，当前不包含舌诊链路",
+  "description": "历史 schema 示例，不再被代码加载；实际知识数据已迁入 knowledge/data/ 目录（syndrome_rules/term_normalization/chief_complaint_followup/red_flags），由 knowledge/tcm_knowledge.py 加载并校验",
   "term_normalization": [
     {
       "canonical": "恶寒",

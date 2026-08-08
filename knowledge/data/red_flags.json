@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "description": "高风险红旗信号表：抽取阶段命中任一别名即记为 red_flag，风险分层直接升高。内容为演示级，需专业审核。",
+  "flags": [
+    {
+      "label": "持续胸痛",
+      "aliases": ["持续胸痛", "胸痛不缓解"],
+      "priority": "HIGH",
+      "disposition": "立即急诊"
+    },
+    {
+      "label": "呼吸困难",
+      "aliases": ["呼吸困难", "喘不过气", "无法呼吸"],
+      "priority": "HIGH",
+      "disposition": "立即急诊"
+    },
+    {
+      "label": "意识障碍",
+      "aliases": ["意识模糊", "昏迷", "晕厥", "失去意识"],
+      "priority": "HIGH",
+      "disposition": "立即急诊"
+    },
+    {
+      "label": "突发剧烈头痛",
+      "aliases": ["突发剧烈头痛", "突然头痛很厉害"],
+      "priority": "HIGH",
+      "disposition": "立即急诊"
+    },
+    {
+      "label": "便血",
+      "aliases": ["便血", "黑便"],
+      "priority": "HIGH",
+      "disposition": "尽快就医"
+    },
+    {
+      "label": "胸痛伴呼吸困难",
+      "aliases": ["胸痛伴呼吸困难", "胸口痛喘不上气"],
+      "priority": "HIGH",
+      "disposition": "立即急诊"
+    }
+  ]
+}

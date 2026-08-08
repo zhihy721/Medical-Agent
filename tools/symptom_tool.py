@@ -1,6 +1,7 @@
 # 正则表达式工具，用于从用户输入的文本中提取症状、伴随症状、病史、过敏史等信息
 import re
 
+from knowledge.tcm_knowledge import get_red_flags
 from tools.protocol import managed_tool
 
 TOOL_VERSION = "1.0"
@@ -44,13 +45,8 @@ SEVERITY_PATTERNS = [
     ("重度", ["严重", "剧烈", "很重", "受不了"]),
 ]
 
-RED_FLAG_PATTERNS = {
-    "持续胸痛": ["持续胸痛", "胸痛不缓解"],
-    "呼吸困难": ["呼吸困难", "喘不过气", "无法呼吸"],
-    "意识障碍": ["意识模糊", "昏迷", "晕厥", "失去意识"],
-    "突发剧烈头痛": ["突发剧烈头痛", "突然头痛很厉害"],
-    "便血": ["便血", "黑便"],
-}
+# 红旗信号表统一由知识库 red_flags.json 提供，避免多处硬编码不一致
+RED_FLAG_PATTERNS = {item["label"]: item["aliases"] for item in get_red_flags()}
 
 TCM_FIELD_PATTERNS = {
     "cold_heat": {
@@ -219,7 +215,12 @@ def _extract_tcm_fields(text):
 @managed_tool("symptom_extraction", TOOL_VERSION, "规则抽取症状、体征与中医四诊槽位")
 def extract_symptoms_tool(text):
     """协议版入口：返回标准 ToolResult，异常由 managed_tool 捕获。"""
-    normalized_text = text.strip().lower()
+    # 注意：只对 ASCII 做小写化，全量 lower() 会把中文标点映射成生僻字符，
+    # 破坏后续关键词匹配（如“，”会变成 U+1F80C）
+    normalized_text = text.strip()
+    normalized_text = "".join(
+        char.lower() if ord(char) < 128 else char for char in normalized_text
+    )
     symptoms = _find_labels(normalized_text, SYMPTOM_SYNONYMS)
     accompanying = _find_labels(normalized_text, ACCOMPANYING_SYMPTOMS)
     history = _find_labels(normalized_text, HISTORY_KEYWORDS)

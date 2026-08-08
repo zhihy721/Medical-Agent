@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "description": "主诉对应的优先追问槽位表：匹配到主诉时优先补充这些槽位。内容为演示级，需专业审核。",
+  "items": [
+    {"chief_complaint": "咳嗽", "priority_slots": ["cold_heat", "sweating", "thirst"]},
+    {"chief_complaint": "发热", "priority_slots": ["cold_heat", "sweating", "thirst"]},
+    {"chief_complaint": "胸痛", "priority_slots": ["location", "pain_character", "cold_heat", "emotion"]},
+    {"chief_complaint": "腹痛", "priority_slots": ["pain_character", "appetite", "stool_urine", "cold_heat"]},
+    {"chief_complaint": "头痛", "priority_slots": ["cold_heat", "sleep", "emotion"]},
+    {"chief_complaint": "头晕", "priority_slots": ["thirst", "sleep", "appetite"]},
+    {"chief_complaint": "乏力", "priority_slots": ["appetite", "sleep", "stool_urine"]},
+    {"chief_complaint": "恶心", "priority_slots": ["appetite", "thirst", "stool_urine"]},
+    {"chief_complaint": "腹泻", "priority_slots": ["cold_heat", "appetite", "stool_urine"]},
+    {"chief_complaint": "胸闷", "priority_slots": ["pain_character", "cold_heat", "sweating"]},
+    {"chief_complaint": "心悸", "priority_slots": ["sleep", "emotion", "cold_heat"]},
+    {"chief_complaint": "呕吐", "priority_slots": ["appetite", "stool_urine", "cold_heat"]},
+    {"chief_complaint": "咽痛", "priority_slots": ["cold_heat", "thirst", "sweating"]},
+    {"chief_complaint": "失眠", "priority_slots": ["emotion", "appetite", "cold_heat"]},
+    {"chief_complaint": "便秘", "priority_slots": ["appetite", "thirst", "cold_heat"]}
+  ]
+}

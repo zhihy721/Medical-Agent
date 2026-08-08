@@ -1,6 +1,6 @@
 import json
 
-from knowledge.tcm_knowledge import TCM_SLOT_LABELS
+from knowledge.tcm_knowledge import TCM_SLOT_LABELS, normalize_term
 from llm.prompt import EXTRACTION_PROMPT, FINAL_RESPONSE_PROMPT, FOLLOWUP_PROMPT
 from tools.symptom_tool import extract_symptoms
 
@@ -78,7 +78,23 @@ FOLLOWUP_VARIANTS = {
 def extract_case_slots(llm, user_input):
     rule_result = extract_symptoms(user_input)
     llm_result = llm.extract_json(EXTRACTION_PROMPT.format(user_input=user_input))
+    llm_result = _normalize_llm_result(llm_result)
     return merge_extracted_slots(rule_result, llm_result)
+
+# LLM 抽取结果先过术语归一化，把口语别名统一为规范词（如“怕冷”→“恶寒”）
+# 保证与规则层、辨证规则用同一套词表
+def _normalize_llm_result(llm_result):
+    if not isinstance(llm_result, dict):
+        return llm_result
+    normalized = {}
+    for key, value in llm_result.items():
+        if isinstance(value, str):
+            normalized[key] = normalize_term(value)
+        elif isinstance(value, list):
+            normalized[key] = [normalize_term(item) if isinstance(item, str) else item for item in value]
+        else:
+            normalized[key] = value
+    return normalized
 
 # 规则和LLM怎么合并
 # schema约束，防止LLM乱抽取
