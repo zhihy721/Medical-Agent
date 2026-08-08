@@ -92,9 +92,24 @@ DEEPSEEK_API_KEY=your_deepseek_api_key
 DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_MAX_TOKENS=512
 DEEPSEEK_TEMPERATURE=0.2
+DATA_DIR=data
+LOG_DIR=logs
 ```
 
 `config.env` 已加入 `.gitignore`，不要提交真实 API Key。
+
+## 数据与日志
+
+运行时会自动生成两个本地目录（均已加入 `.gitignore`）：
+
+```text
+data/profiles/{user_id}.json     长期用户画像（JSON 文件持久化）
+data/sessions/{session_id}.json  会话状态与对话历史
+logs/app.log                     统一日志（滚动文件）
+logs/events.jsonl                结构化事件流（执行轨迹）
+```
+
+服务重启后长期画像与会话状态不丢失；网页侧栏的“执行轨迹”区块和 `/api/debug/trace` 接口读取的就是事件流数据。
 
 ## 项目结构
 
@@ -102,12 +117,13 @@ DEEPSEEK_TEMPERATURE=0.2
 app.py                 Flask 网页入口
 start.py               本地网页启动器
 config_manager.py      本地配置读写和脱敏
-templates/index.html   配置页和问诊页
+templates/index.html   配置页、问诊页和运行状态侧栏
 agent/                 Agent 编排、路由和控制器
-llm/                   LLM 调用封装
-memory/                会话记忆和用户画像
-tools/                 症状、风险和指南工具
+llm/                   LLM 调用封装（含埋点与指标累计）
+memory/                会话记忆、用户画像与 JSON 文件持久化
+tools/                 症状、风险、指南工具，及工具协议与注册表
 knowledge/             中医知识结构
+observability/         日志、JSONL 事件流与指标汇总
 test_system.py         系统检查脚本
 ```
 
@@ -118,8 +134,11 @@ test_system.py         系统检查脚本
 - 支持 DeepSeek 和 Mock 演示模式
 - 多轮问诊状态管理
 - 症状抽取、缺失字段追问、风险等级展示
-- 长期用户画像和短期会话状态分离
+- 长期用户画像和短期会话状态分离，JSON 文件持久化，重启不丢失
 - LangGraph 作为默认 Agent runtime
+- 统一工具协议（ToolResult + 版本 + 异常降级）与工具注册表
+- 可观测性：统一日志、结构化事件流、LLM 耗时/token 指标、网页侧栏执行轨迹
+- 调试接口 `/api/debug/trace`：查看当前会话的节点耗时、风险结果与 replan 记录
 
 ## 注意
 

@@ -16,6 +16,10 @@ from llm.prompt import SYSTEM_PROMPT
 from memory.memory import ConversationMemory
 from memory.profile_store import InMemoryProfileStore, JsonFileProfileStore
 from memory.session_store import InMemorySessionStore, JsonFileSessionStore
+from observability.events import event_logger, setup_events
+from observability.logger import setup_logging
+from observability.metrics import summarize_events
+from tools.registry import default_registry
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "medical-agent-demo-secret")
@@ -29,6 +33,11 @@ _config = read_config()
 _data_dir = _config.get("DATA_DIR", "data")
 profile_store = JsonFileProfileStore(data_dir=f"{_data_dir}/profiles")
 session_store = JsonFileSessionStore(data_dir=f"{_data_dir}/sessions")
+
+# 初始化统一日志与 JSONL 事件流
+_log_dir = _config.get("LOG_DIR", "logs")
+setup_logging(_log_dir)
+setup_events(_log_dir)
 
 
 def _reload_runtime():
@@ -168,6 +177,7 @@ def status():
             "llm_status": snapshot.get("llm_status", {}),
             "agent_runtime": getattr(agent, "runtime_name", agent_runtime),
             "config_status": get_config_status(),
+            "metrics": llm.get_metrics(),
         }
     )
 
@@ -190,10 +200,30 @@ def chat():
                 "llm_status": snapshot.get("llm_status", {}),
                 "agent_runtime": getattr(agent, "runtime_name", agent_runtime),
                 "config_status": get_config_status(),
+                "metrics": llm.get_metrics(),
             }
         )
     except Exception as exc:
         return jsonify({"response": f"系统处理失败: {exc}"}), 500
+
+
+@app.route("/api/debug/trace", methods=["GET"])
+def api_debug_trace():
+    """调试接口：读取当前会话的执行轨迹事件流与统计摘要。"""
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+    except ValueError:
+        limit = 200
+    session_id = session.get("session_id", "")
+    events = event_logger.read_events(session_id=session_id, limit=limit) if session_id else []
+    return jsonify(
+        {
+            "session_id": session_id,
+            "events": events,
+            "summary": summarize_events(events),
+            "tools": default_registry.list_tools(),
+        }
+    )
 
 
 @app.route("/reset", methods=["POST"])

@@ -7,6 +7,9 @@ import sys
 import threading
 import webbrowser
 
+from config_manager import read_config
+from observability.logger import get_logger, setup_logging
+
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 5000
@@ -30,11 +33,17 @@ def main():
     args = parse_args()
     local_url = f"http://localhost:{args.port}"
 
+    # 启动器自身也接入统一日志，方便排查启动阶段问题
+    config = read_config()
+    setup_logging(config.get("LOG_DIR", "logs"))
+    logger = get_logger("start")
+
     print("Medical Agent Web Launcher")
     print("=" * 28)
     print(f"Local URL: {local_url}")
     print("If this is your first run, the web page will guide you through API setup.")
     print("Press Ctrl+C to stop the server.")
+    logger.info("Launcher starting, local url=%s", local_url)
 
     if not args.no_browser:
         open_browser_later(local_url)

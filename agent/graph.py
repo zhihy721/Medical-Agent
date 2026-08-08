@@ -5,6 +5,7 @@ import uuid
 # 类型注解工具
 # Any:任意类型；Dict:字典类型；List:列表类型；TypedDict:类型化字典，规定这个 dict 里必须有哪些字段
 # State=TypedDict(LangGraph的核心)
+import time
 from typing import Any, Dict, List, TypedDict
 # 核心模块：规划器、路由器
 # Planner:根据当前情况，决定下一步做什么
@@ -48,11 +49,47 @@ from agent.runtime_utils import (
     sync_plan_to_memory,
     sync_review_to_memory,
 )
-# 外部工具
-# get_guideline：根据当前情况，查相关指南/规则
-# risk_assessment：根据当前情况，评估风险（高/中/低）
-from tools.guideline_tool import get_guideline
-from tools.risk_tool import risk_assessment
+# 外部工具（协议版）
+# get_guideline_tool：根据当前情况，查相关指南/规则，返回标准 ToolResult
+# risk_assessment_tool：根据当前情况，评估风险（高/中/低），返回标准 ToolResult
+from observability.events import event_logger
+from observability.logger import get_logger, set_trace_context
+from tools.guideline_tool import get_guideline_tool
+from tools.protocol import unwrap_tool_result
+from tools.risk_tool import fallback_risk_result, risk_assessment_tool
+
+_logger = get_logger("agent.graph")
+
+
+# 运行风险评估工具，失败时降级为 UNKNOWN，保证问诊链路不中断
+def _run_risk_assessment(case_state):
+    return unwrap_tool_result(risk_assessment_tool(case_state), fallback_risk_result)
+
+
+# 运行指南工具，失败时返回最小化指南
+def _run_guideline(case_state, risk_result, plan=None):
+    return unwrap_tool_result(
+        get_guideline_tool(case_state, risk_result, plan),
+        lambda: {"summary": "指南生成异常，建议谨慎参考并补充信息。", "advice": []},
+    )
+
+
+# 节点埋点包装：emit node_enter/node_exit 事件（含耗时），不侵入节点函数体
+def _traced_node(name, func):
+    def wrapper(state):
+        event_logger.emit("node_enter", node=name, internal_step=state.get("internal_step", 0))
+        started = time.perf_counter()
+        try:
+            update = func(state)
+        except Exception:
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+            event_logger.emit("node_exit", node=name, elapsed_ms=elapsed_ms, error=True)
+            raise
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        event_logger.emit("node_exit", node=name, elapsed_ms=elapsed_ms)
+        return update
+
+    return wrapper
 
 # Agent运行时的状态结构，定义了在图中传递的数据格式
 # 所有节点共享一个state
@@ -111,7 +148,7 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
     # 3.用router.route生成action
     def _run_routed_action(plan, risk_result):
         case_state = memory.get_case_state()
-        guideline_result = get_guideline(case_state, risk_result, plan)
+        guideline_result = _run_guideline(case_state, risk_result, plan)
         action_result = router.route(case_state, plan, risk_result, guideline_result)
         return {
             "guideline_result": guideline_result,
@@ -141,7 +178,12 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
     # 风险评估：输出风险等级（高/中/低）
     def risk_assess_node(state: AgentState):
         case_state = memory.get_case_state()
-        risk_result = risk_assessment(case_state)
+        risk_result = _run_risk_assessment(case_state)
+        event_logger.emit(
+            "risk_assessed",
+            risk=risk_result.get("risk", ""),
+            matched_rules=risk_result.get("matched_rules", []),
+        )
         memory.update_triage(risk_result=risk_result)
 
         return {
@@ -161,6 +203,12 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
             plan["action_reason"] = f"{plan.get('action_reason', '')} 自检改判：{override_action}。".strip()
 
         sync_plan_to_memory(memory, plan, internal_step=step)
+        event_logger.emit(
+            "plan",
+            next_action=plan.get("next_action", ""),
+            reason=(plan.get("action_reason") or "")[:120],
+            internal_step=step,
+        )
 
         return {
             "plan": plan,
@@ -173,7 +221,7 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
         plan = dict(state["plan"])
         plan["next_action"] = "risk_escalation"
         case_state = memory.get_case_state()
-        guideline_result = get_guideline(case_state, state["risk_result"], plan)
+        guideline_result = _run_guideline(case_state, state["risk_result"], plan)
         action_result = build_risk_escalation_action_result(
             case_state=case_state,
             risk_result=state["risk_result"],
@@ -234,7 +282,7 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
         plan = dict(state["plan"])
         plan["next_action"] = "final_advice"
         case_state = memory.get_case_state()
-        guideline_result = get_guideline(case_state, state["risk_result"], plan)
+        guideline_result = _run_guideline(case_state, state["risk_result"], plan)
         action_result = build_final_advice_action_result(
             case_state=case_state,
             risk_result=state["risk_result"],
@@ -254,6 +302,11 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
             plan=state["plan"],
             risk_result=state["risk_result"],
             action_result=action_result,
+        )
+        event_logger.emit(
+            "review",
+            needs_replan=bool(review_result.get("needs_replan")),
+            suggested_action=review_result.get("suggested_action", ""),
         )
         sync_review_to_memory(
             memory, review_result, fallback_stop_reason=state["plan"].get("stop_condition", "")
@@ -309,18 +362,18 @@ def build_agent_graph(llm, memory, max_internal_steps=3, checkpointer=None):
         return next_action
 
     graph = StateGraph(AgentState)
-    graph.add_node("extract", extract_node)
-    graph.add_node("risk_assess", risk_assess_node)
-    graph.add_node("plan", plan_node)
-    graph.add_node("risk_escalation", risk_escalation_node)
-    graph.add_node("clarify_conflict", clarify_conflict_node)
-    graph.add_node("ask_followup_single", ask_followup_single_node)
-    graph.add_node("ask_followup_bundle", ask_followup_bundle_node)
-    graph.add_node("summarize_progress", summarize_progress_node)
-    graph.add_node("request_pulse_input", request_pulse_input_node)
-    graph.add_node("final_advice", final_advice_node)
-    graph.add_node("review", review_node)
-    graph.add_node("respond", respond_node)
+    graph.add_node("extract", _traced_node("extract", extract_node))
+    graph.add_node("risk_assess", _traced_node("risk_assess", risk_assess_node))
+    graph.add_node("plan", _traced_node("plan", plan_node))
+    graph.add_node("risk_escalation", _traced_node("risk_escalation", risk_escalation_node))
+    graph.add_node("clarify_conflict", _traced_node("clarify_conflict", clarify_conflict_node))
+    graph.add_node("ask_followup_single", _traced_node("ask_followup_single", ask_followup_single_node))
+    graph.add_node("ask_followup_bundle", _traced_node("ask_followup_bundle", ask_followup_bundle_node))
+    graph.add_node("summarize_progress", _traced_node("summarize_progress", summarize_progress_node))
+    graph.add_node("request_pulse_input", _traced_node("request_pulse_input", request_pulse_input_node))
+    graph.add_node("final_advice", _traced_node("final_advice", final_advice_node))
+    graph.add_node("review", _traced_node("review", review_node))
+    graph.add_node("respond", _traced_node("respond", respond_node))
 
     graph.add_edge(START, "extract")
     graph.add_edge("extract", "risk_assess")
@@ -379,16 +432,37 @@ class LangGraphMedicalAgent:
         return {"configurable": {"thread_id": self.thread_id}}
 
     def run(self, user_input):
-        result = self.app.invoke(
-            {
-                "user_input": user_input,
-                "messages": [{"role": "user", "content": user_input}],
-                "case_state": self.memory.get_case_state(),
-                "override_action": "",
-                "internal_step": 0,
-            },
-            self._invoke_config(),
+        # 每轮生成 turn_id，串联本次提问的全链路事件
+        turn_id = uuid.uuid4().hex[:12]
+        session_id = getattr(self.memory, "session_id", "") or self.thread_id
+        set_trace_context(session_id=session_id, turn_id=turn_id)
+
+        started = time.perf_counter()
+        try:
+            result = self.app.invoke(
+                {
+                    "user_input": user_input,
+                    "messages": [{"role": "user", "content": user_input}],
+                    "case_state": self.memory.get_case_state(),
+                    "override_action": "",
+                    "internal_step": 0,
+                },
+                self._invoke_config(),
+            )
+        except Exception as exc:
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+            event_logger.emit("run_end", turn_id=turn_id, error=str(exc), elapsed_ms=elapsed_ms)
+            _logger.error("Agent run failed turn_id=%s: %s", turn_id, exc)
+            raise
+
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        event_logger.emit(
+            "run_end",
+            turn_id=turn_id,
+            elapsed_ms=elapsed_ms,
+            internal_step=result.get("internal_step", 1),
         )
+        _logger.info("Agent run finished turn_id=%s elapsed_ms=%s", turn_id, elapsed_ms)
         return result.get("response", "")
 
     # 提供系统接口，允许外部注入数据（如脉搏数据），并触发图的相关节点更新状态
@@ -396,7 +470,7 @@ class LangGraphMedicalAgent:
     def ingest_pulse_data(self, pulse_data):
         self.memory.update_pulse_data(pulse_data)
         case_state = self.memory.get_case_state()
-        risk_result = risk_assessment(case_state)
+        risk_result = _run_risk_assessment(case_state)
         plan = self.planner.create_plan(case_state)
         self.memory.update_triage(risk_result=risk_result)
         sync_plan_to_memory(self.memory, plan)

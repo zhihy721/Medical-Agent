@@ -1,6 +1,10 @@
 # 正则表达式工具，用于从用户输入的文本中提取症状、伴随症状、病史、过敏史等信息
 import re
 
+from tools.protocol import managed_tool
+
+TOOL_VERSION = "1.0"
+
 SYMPTOM_SYNONYMS = {
     "发热": ["发热", "发烧", "高烧", "低烧", "体温高"],
     "咳嗽": ["咳嗽", "干咳", "咳痰"],
@@ -212,7 +216,9 @@ def _extract_tcm_fields(text):
     return result
 
 
-def extract_symptoms(text):
+@managed_tool("symptom_extraction", TOOL_VERSION, "规则抽取症状、体征与中医四诊槽位")
+def extract_symptoms_tool(text):
+    """协议版入口：返回标准 ToolResult，异常由 managed_tool 捕获。"""
     normalized_text = text.strip().lower()
     symptoms = _find_labels(normalized_text, SYMPTOM_SYNONYMS)
     accompanying = _find_labels(normalized_text, ACCOMPANYING_SYMPTOMS)
@@ -237,3 +243,33 @@ def extract_symptoms(text):
         "description": text.strip(),
         **tcm_fields,
     }
+
+
+def extract_symptoms(text):
+    """兼容层：保持旧接口行为，返回抽取结果 dict。"""
+    result = extract_symptoms_tool(text)
+    if result["status"] != "ok":
+        return _empty_extraction(text)
+    return result["data"]
+
+
+def _empty_extraction(text):
+    """工具异常时的降级结果：空槽位 + 原文描述，保证下游合并逻辑不报错。"""
+    empty = {
+        "chief_complaint": "",
+        "symptoms": [],
+        "accompanying_symptoms": [],
+        "duration": "",
+        "severity": "",
+        "location": "",
+        "age": "",
+        "sex": "",
+        "past_history": [],
+        "allergy_history": [],
+        "medication_history": [],
+        "red_flags": [],
+        "description": (text or "").strip(),
+    }
+    for field in TCM_FIELD_PATTERNS:
+        empty[field] = ""
+    return empty

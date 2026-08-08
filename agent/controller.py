@@ -16,8 +16,21 @@ from agent.runtime_utils import (
     sync_plan_to_memory,
     sync_review_to_memory,
 )
-from tools.guideline_tool import get_guideline
-from tools.risk_tool import risk_assessment
+from tools.guideline_tool import get_guideline_tool
+from tools.protocol import unwrap_tool_result
+from tools.risk_tool import fallback_risk_result, risk_assessment_tool
+
+
+# 与 LangGraph 运行时保持一致：调用协议版工具，失败时降级
+def _run_risk_assessment(case_state):
+    return unwrap_tool_result(risk_assessment_tool(case_state), fallback_risk_result)
+
+
+def _run_guideline(case_state, risk_result, plan=None):
+    return unwrap_tool_result(
+        get_guideline_tool(case_state, risk_result, plan),
+        lambda: {"summary": "指南生成异常，建议谨慎参考并补充信息。", "advice": []},
+    )
 
 
 class MedicalAgent:
@@ -60,7 +73,7 @@ class MedicalAgent:
     def ingest_pulse_data(self, pulse_data):
         self.memory.update_pulse_data(pulse_data)
         case_state = self.memory.get_case_state()
-        risk_result = risk_assessment(case_state)
+        risk_result = _run_risk_assessment(case_state)
         plan = self.planner.create_plan(case_state)
         self.memory.update_triage(risk_result=risk_result)
         sync_plan_to_memory(self.memory, plan)
@@ -80,7 +93,7 @@ class MedicalAgent:
 
         for step in range(1, self.MAX_INTERNAL_STEPS + 1):
             case_state = self.memory.get_case_state()
-            risk_result = risk_assessment(case_state)
+            risk_result = _run_risk_assessment(case_state)
             self.memory.update_triage(risk_result=risk_result)
             case_state = self.memory.get_case_state()
 
@@ -92,7 +105,7 @@ class MedicalAgent:
 
             sync_plan_to_memory(self.memory, plan, internal_step=step)
             case_state = self.memory.get_case_state()
-            guideline_result = get_guideline(case_state, risk_result, plan)
+            guideline_result = _run_guideline(case_state, risk_result, plan)
             action_result = self.router.route(case_state, plan, risk_result, guideline_result)
 
             review = self.planner.review_action(case_state, plan, risk_result, action_result)

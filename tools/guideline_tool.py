@@ -1,4 +1,7 @@
 from knowledge.tcm_knowledge import TCM_SLOT_LABELS
+from tools.protocol import managed_tool
+
+TOOL_VERSION = "1.0"
 
 RISK_SUMMARIES = {
     "HIGH": "当前信息提示风险较高，应优先考虑线下医疗评估。",
@@ -8,7 +11,9 @@ RISK_SUMMARIES = {
 }
 
 
-def get_guideline(case_state, risk_result, plan=None):
+@managed_tool("guideline", TOOL_VERSION, "根据风险与问诊进展生成分诊指引与建议")
+def get_guideline_tool(case_state, risk_result, plan=None):
+    """协议版入口：返回标准 ToolResult，异常由 managed_tool 捕获。"""
     plan = plan or {}
     missing_slots = plan.get("missing_slots", case_state.get("missing_slots", []))
     syndrome_candidates = plan.get("syndrome_candidates", case_state.get("syndrome_candidates", []))
@@ -51,3 +56,14 @@ def get_guideline(case_state, risk_result, plan=None):
         "summary": RISK_SUMMARIES.get(risk, RISK_SUMMARIES["UNKNOWN"]),
         "advice": advice,
     }
+
+
+def get_guideline(case_state, risk_result, plan=None):
+    """兼容层：保持旧接口行为，返回 summary/advice dict。"""
+    result = get_guideline_tool(case_state, risk_result, plan)
+    if result["status"] != "ok":
+        return {
+            "summary": "指南生成异常，建议谨慎参考并补充信息。",
+            "advice": ["以上内容仅用于分诊与中医问诊整理，不能替代医生面诊。"],
+        }
+    return result["data"]

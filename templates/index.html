@@ -381,6 +381,33 @@
             color: var(--primary);
         }
 
+        .trace-toggle {
+            float: right;
+            font-size: 12px;
+            min-height: 26px;
+            padding: 0 10px;
+        }
+
+        .trace-timeline {
+            display: grid;
+            gap: 5px;
+            margin-top: 8px;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .trace-item {
+            background: var(--surface-soft);
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.5;
+            padding: 5px 8px;
+        }
+
+        .trace-meta {
+            color: var(--muted);
+        }
+
         @media (max-width: 900px) {
             .workspace,
             .form-grid {
@@ -502,6 +529,7 @@
                         <div id="llm-provider" class="muted">provider: loading</div>
                         <div id="llm-config" class="muted">deepseek configured: loading</div>
                         <div id="llm-runtime" class="muted">last used: loading</div>
+                        <div id="llm-metrics" class="muted">metrics: 暂无调用</div>
                     </div>
                     <div class="state-block">
                         <div class="state-label">当前状态</div>
@@ -526,6 +554,13 @@
                     <div class="state-block">
                         <div class="state-label">结构化摘要</div>
                         <div id="case-summary" class="muted">等待输入</div>
+                    </div>
+                    <div class="state-block">
+                        <div class="state-label">执行轨迹
+                            <button id="trace-toggle-btn" class="secondary trace-toggle">展开</button>
+                        </div>
+                        <div id="trace-summary" class="muted">等待运行</div>
+                        <div id="trace-timeline" class="trace-timeline hidden"></div>
                     </div>
                     <button id="edit-config-btn" class="secondary">编辑配置</button>
                 </div>
@@ -762,8 +797,74 @@
                 const response = await fetch("/status");
                 const data = await response.json();
                 renderCaseState(data.case_state, data.llm_status, data.config_status, data.agent_runtime);
+                renderMetrics(data.metrics);
+                loadTrace();
             } catch (error) {
                 renderLlmStatus({ last_provider_used: "mock" }, { provider: "unknown", deepseek_configured: false });
+            }
+        }
+
+        function renderMetrics(metrics) {
+            const target = document.getElementById("llm-metrics");
+            if (!metrics || !metrics.call_count) {
+                target.textContent = "metrics: 暂无调用";
+                return;
+            }
+            const totalTokens = (metrics.total_prompt_tokens || 0) + (metrics.total_completion_tokens || 0);
+            const fallbackRate = Math.round((metrics.mock_fallback_rate || 0) * 100);
+            target.textContent = `calls: ${metrics.call_count} | avg ${metrics.avg_latency_ms}ms | tokens ${totalTokens} | mock降级 ${fallbackRate}%`;
+        }
+
+        function describeTraceEvent(event) {
+            switch (event.event) {
+                case "node_exit":
+                    return `${event.node} 耗时 ${event.elapsed_ms}ms${event.error ? "（异常）" : ""}`;
+                case "llm_call":
+                    return `${event.provider} 调用耗时 ${event.elapsed_ms}ms${event.fallback ? "（mock 降级）" : ""}`;
+                case "tool_call":
+                    return `工具 ${event.tool} v${event.version} 耗时 ${event.elapsed_ms}ms${event.status === "error" ? "（失败）" : ""}`;
+                case "plan":
+                    return `决定动作: ${event.next_action}`;
+                case "review":
+                    return event.needs_replan ? `自检改判: ${event.suggested_action}` : "自检通过";
+                case "risk_assessed":
+                    return `风险等级: ${event.risk}`;
+                case "run_end":
+                    return event.error ? `本轮执行失败: ${event.error}` : `本轮总耗时 ${event.elapsed_ms}ms`;
+                default:
+                    return event.event;
+            }
+        }
+
+        function renderTrace(data) {
+            const summary = data.summary || {};
+            const summaryTarget = document.getElementById("trace-summary");
+            summaryTarget.textContent = summary.total_events
+                ? `${summary.turn_count} 轮 | LLM ${summary.llm_calls} 次平均 ${summary.llm_avg_latency_ms}ms | replan ${summary.replans} 次 | 工具 ${summary.tool_calls} 次`
+                : "暂无执行记录";
+
+            const timeline = document.getElementById("trace-timeline");
+            timeline.innerHTML = "";
+            const events = (data.events || []).slice(-20).reverse();
+            events.forEach(event => {
+                const item = document.createElement("div");
+                item.className = "trace-item";
+                const meta = document.createElement("span");
+                meta.className = "trace-meta";
+                meta.textContent = `${(event.ts || "").slice(11)} · `;
+                item.appendChild(meta);
+                item.appendChild(document.createTextNode(describeTraceEvent(event)));
+                timeline.appendChild(item);
+            });
+        }
+
+        async function loadTrace() {
+            try {
+                const response = await fetch("/api/debug/trace?limit=80");
+                const data = await response.json();
+                renderTrace(data);
+            } catch (error) {
+                // 轨迹展示失败不影响主流程
             }
         }
 
@@ -786,6 +887,8 @@
                 const data = await response.json();
                 addMessage(data.response || "系统没有返回内容。", "bot");
                 renderCaseState(data.case_state, data.llm_status, data.config_status, data.agent_runtime);
+                renderMetrics(data.metrics);
+                loadTrace();
             } catch (error) {
                 addMessage("请求失败，请稍后再试。", "bot");
             } finally {
@@ -809,6 +912,14 @@
         document.getElementById("save-config-btn").addEventListener("click", () => saveConfig());
         document.getElementById("mock-mode-btn").addEventListener("click", () => saveConfig({ LLM_PROVIDER: "mock" }));
         document.getElementById("edit-config-btn").addEventListener("click", () => showSetup("可以更新配置，留空 API key 会保留当前密钥。"));
+
+        document.getElementById("trace-toggle-btn").addEventListener("click", () => {
+            const timeline = document.getElementById("trace-timeline");
+            const button = document.getElementById("trace-toggle-btn");
+            const willExpand = timeline.classList.contains("hidden");
+            timeline.classList.toggle("hidden", !willExpand);
+            button.textContent = willExpand ? "收起" : "展开";
+        });
 
         sendBtn.addEventListener("click", () => sendMessage());
         resetBtn.addEventListener("click", resetChat);

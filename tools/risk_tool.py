@@ -1,4 +1,12 @@
-def risk_assessment(case_state):
+from tools.protocol import managed_tool
+
+# 工具版本：风险规则迭代时升级，便于历史会话追溯当时使用的规则版本
+TOOL_VERSION = "1.0"
+
+
+@managed_tool("risk_assessment", TOOL_VERSION, "基于规则的安全风险评估，输出 HIGH/MEDIUM/LOW/UNKNOWN")
+def risk_assessment_tool(case_state):
+    """协议版入口：返回标准 ToolResult，异常由 managed_tool 捕获。"""
     red_flags = case_state.get("red_flags", [])
     symptoms = set(case_state.get("symptoms", []))
     accompanying = set(case_state.get("accompanying_symptoms", []))
@@ -138,3 +146,22 @@ def _safe_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def risk_assessment(case_state):
+    """兼容层：保持旧接口行为，返回风险结果 dict。"""
+    result = risk_assessment_tool(case_state)
+    if result["status"] != "ok":
+        return fallback_risk_result(result["error"])
+    return result["data"]
+
+
+def fallback_risk_result(reason=""):
+    """工具异常时的降级结果，保证问诊链路不中断。"""
+    return _result(
+        "UNKNOWN",
+        reason or "风险评估执行异常",
+        "需要先补充主要不适和病程信息",
+        ["tool_error"],
+        ["先描述最主要的不适、出现多久以及是否明显加重"],
+    )

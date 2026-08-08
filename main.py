@@ -1,10 +1,18 @@
 from agent.factory import create_agent, get_agent_runtime
+from config_manager import read_config
 from llm.llm import LLM
 from llm.prompt import SYSTEM_PROMPT
 from memory.memory import ConversationMemory
+from observability.events import setup_events
+from observability.logger import setup_logging
 
 
 def main():
+    # 初始化日志与事件流，CLI 模式下同样可回溯执行轨迹
+    _config = read_config()
+    setup_logging(_config.get("LOG_DIR", "logs"))
+    setup_events(_config.get("LOG_DIR", "logs"))
+
     llm = LLM(system_prompt=SYSTEM_PROMPT)
     memory = ConversationMemory()
     runtime = get_agent_runtime()

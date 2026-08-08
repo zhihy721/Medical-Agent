@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
     "DEEPSEEK_MAX_TOKENS": "512",
     "DEEPSEEK_TEMPERATURE": "0.2",
     "DATA_DIR": "data",
+    "LOG_DIR": "logs",
 }
 
 PUBLIC_FIELDS = {
@@ -21,6 +22,7 @@ PUBLIC_FIELDS = {
     "DEEPSEEK_MAX_TOKENS",
     "DEEPSEEK_TEMPERATURE",
     "DATA_DIR",
+    "LOG_DIR",
 }
 
 

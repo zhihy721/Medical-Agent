@@ -2,3 +2,4 @@ config.env
 __pycache__/
 .venv/
 data/
+logs/

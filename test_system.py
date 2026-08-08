@@ -56,6 +56,11 @@ def test_imports():
         "knowledge.tcm_knowledge",
         "agent.graph",
         "agent.factory",
+        "tools.protocol",
+        "tools.registry",
+        "observability.logger",
+        "observability.events",
+        "observability.metrics",
     ]
 
     passed = True
@@ -716,6 +721,132 @@ def test_langgraph_followup_route():
             print(f"[FAIL] {label}")
     return passed
 
+# 测试工具协议：ToolResult 结构完整，装饰器捕获异常后降级为 status=error
+def test_tool_protocol_result_and_error_fallback():
+    from tools.protocol import build_tool_result, managed_tool
+
+    result = build_tool_result("demo_tool", "1.0", {"a": 1}, elapsed_ms=3.14159)
+
+    @managed_tool("broken_tool", "1.0", "用于测试异常降级的工具")
+    def _broken_tool(payload):
+        raise ValueError("boom")
+
+    error_result = _broken_tool({})
+
+    checks = [
+        ("tool result status ok", result["status"] == "ok"),
+        ("tool result carries data", result["data"] == {"a": 1}),
+        ("tool result carries version", result["version"] == "1.0"),
+        ("tool result elapsed rounded", result["elapsed_ms"] == 3.14),
+        ("broken tool status error", error_result["status"] == "error"),
+        ("broken tool error message", "boom" in error_result["error"]),
+        ("broken tool name kept", error_result["tool"] == "broken_tool"),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 测试工具注册表：三个核心工具均已注册，清单可序列化，兼容层行为保持不变
+def test_tool_registry_and_compat_layer():
+    from tools.registry import default_registry
+    from tools.risk_tool import risk_assessment
+
+    names = {item["name"] for item in default_registry.list_tools()}
+    risk_result = risk_assessment({"red_flags": ["持续胸痛"], "symptoms": []})
+
+    checks = [
+        ("registry lists risk_assessment", "risk_assessment" in names),
+        ("registry lists guideline", "guideline" in names),
+        ("registry lists symptom_extraction", "symptom_extraction" in names),
+        ("registry get returns callable", callable(default_registry.get("risk_assessment"))),
+        ("compat risk_assessment returns plain dict", isinstance(risk_result, dict) and "status" not in risk_result),
+        ("compat risk_assessment keeps HIGH behavior", risk_result.get("risk") == "HIGH"),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 测试事件流：EventLogger 写入/读取 JSONL，支持 session 过滤；metrics 汇总正确
+def test_event_logger_and_metrics_summary():
+    import tempfile
+
+    from observability.events import EventLogger
+    from observability.logger import set_trace_context
+    from observability.metrics import summarize_events
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        logger = EventLogger(tmp_dir)
+        set_trace_context(session_id="sess-test", turn_id="turn-1")
+        try:
+            logger.emit("llm_call", provider="mock", elapsed_ms=12.0, fallback=True)
+            logger.emit("node_exit", node="plan", elapsed_ms=2.5)
+            logger.emit("risk_assessed", risk="LOW", matched_rules=[])
+        finally:
+            set_trace_context(session_id="", turn_id="")
+
+        events = logger.read_events(session_id="sess-test")
+        all_events = logger.read_events()
+        summary = summarize_events(events)
+
+        checks = [
+            ("events written and read back", len(events) == 3),
+            ("events carry session_id", events[0]["session_id"] == "sess-test"),
+            ("events carry turn_id", events[0]["turn_id"] == "turn-1"),
+            ("session filter works", len(all_events) == 3),
+            ("summary counts llm calls", summary["llm_calls"] == 1),
+            ("summary counts mock fallback", summary["mock_fallbacks"] == 1),
+            ("summary aggregates node stats", summary["node_stats"].get("plan", {}).get("count") == 1),
+            ("summary counts risk distribution", summary["risk_distribution"].get("LOW") == 1),
+        ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 测试 LLM 埋点：get_runtime_status 返回 metrics，mock 调用被正确计数
+def test_llm_metrics():
+    from llm.llm import LLM
+    from llm.prompt import SYSTEM_PROMPT
+
+    llm = LLM(system_prompt=SYSTEM_PROMPT, provider="mock")
+    llm.call("演示调用")
+    status = llm.get_runtime_status()
+    metrics = status.get("metrics", {})
+
+    checks = [
+        ("runtime status contains metrics", "metrics" in status),
+        ("metrics counts call", metrics.get("call_count") == 1),
+        ("metrics counts mock fallback", metrics.get("mock_fallback_count") == 1),
+        ("metrics fallback rate", metrics.get("mock_fallback_rate") == 1.0),
+        ("metrics latency recorded", metrics.get("total_latency_ms", 0) >= 0),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
 
 def main():
     results = [
@@ -740,6 +871,10 @@ def main():
         test_followup_action_builders(),
         test_langgraph_clarify_conflict_route(),
         test_langgraph_followup_route(),
+        test_tool_protocol_result_and_error_fallback(),
+        test_tool_registry_and_compat_layer(),
+        test_event_logger_and_metrics_summary(),
+        test_llm_metrics(),
     ]
     passed = sum(results)
     total = len(results)
