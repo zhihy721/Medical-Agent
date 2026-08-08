@@ -248,4 +248,6 @@ def reset():
 if __name__ == "__main__":
     host = os.getenv("MEDICAL_AGENT_HOST", "0.0.0.0")
     port = int(os.getenv("MEDICAL_AGENT_PORT", "5000"))
-    app.run(debug=True, host=host, port=port)
+    # debug 默认关闭：werkzeug 调试器存在远程执行风险，仅本地调试时通过 APP_DEBUG=true 打开
+    debug = os.getenv("APP_DEBUG", "false").lower() in {"1", "true", "yes"}
+    app.run(debug=debug, host=host, port=port)
