@@ -1,4 +1,4 @@
-from knowledge.tcm_knowledge import TCM_SLOT_LABELS
+from knowledge.tcm_knowledge import TCM_SLOT_LABELS, get_syndrome_advice
 from tools.protocol import managed_tool
 
 TOOL_VERSION = "1.0"
@@ -35,6 +35,13 @@ def get_guideline_tool(case_state, risk_result, plan=None):
         for candidate in syndrome_candidates[:2]:
             evidence = "、".join(candidate.get("matched_evidence", [])) or "现有症状组合"
             advice.append(f"当前问诊线索可暂参考{candidate['name']}，依据包括：{evidence}。")
+            # 引用知识库中的治则方向与调理建议，让建议有据可依
+            extra = get_syndrome_advice(candidate["name"])
+            if extra.get("treatment_principle"):
+                lifestyle = "；".join(extra["lifestyle_advice"][:2])
+                advice.append(
+                    f"{candidate['name']}的调理方向为{extra['treatment_principle']}，日常可参考：{lifestyle}。"
+                )
 
     if case_state.get("pulse_summary"):
         pulse_quality = case_state.get("pulse_signal_quality")
