@@ -1,0 +1,14 @@
+{
+  "id": "13_negation_red_flag",
+  "description": "用户否认红旗症状（没有喘不过气、没有便血）时不应误报红旗、不应升级为高风险",
+  "turns": [
+    {
+      "user": "我没有喘不过气，也没有便血，就是有点乏力，三天了",
+      "expect": {
+        "risk": "MEDIUM",
+        "symptoms_contain": ["乏力"],
+        "slots_filled": ["duration"]
+      }
+    }
+  ]
+}

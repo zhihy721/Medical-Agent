@@ -157,6 +157,34 @@ def _find_labels(text, mapping):
     return labels
 
 
+# 否定词（中文否定词出现在动词前）；紧邻关键词前 2 字内出现则视为用户在否认
+NEGATION_PREFIXES = ("不", "没", "无", "未")
+
+
+def _find_labels_with_negation(text, mapping):
+    """带否定豁免的关键词匹配：遍历全部出现位置，存在任一非否定命中才算匹配。
+    用于高风险红旗信号，避免“没有喘不过气”被误报为红旗触发不必要的急诊升级。"""
+    labels = []
+    for label, keywords in mapping.items():
+        matched = False
+        for keyword in keywords:
+            start = 0
+            while True:
+                index = text.find(keyword, start)
+                if index < 0:
+                    break
+                prefix = text[max(0, index - 2):index]
+                if not any(neg in prefix for neg in NEGATION_PREFIXES):
+                    matched = True
+                    break
+                start = index + len(keyword)
+            if matched:
+                break
+        if matched:
+            labels.append(label)
+    return labels
+
+
 def _extract_duration(text):
     for pattern in DURATION_REGEXES:
         match = pattern.search(text)
@@ -225,7 +253,7 @@ def extract_symptoms_tool(text):
     accompanying = _find_labels(normalized_text, ACCOMPANYING_SYMPTOMS)
     history = _find_labels(normalized_text, HISTORY_KEYWORDS)
     allergies = _find_labels(normalized_text, ALLERGY_KEYWORDS)
-    red_flags = _find_labels(normalized_text, RED_FLAG_PATTERNS)
+    red_flags = _find_labels_with_negation(normalized_text, RED_FLAG_PATTERNS)
     tcm_fields = _extract_tcm_fields(normalized_text)
 
     return {
