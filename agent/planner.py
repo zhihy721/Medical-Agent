@@ -32,6 +32,12 @@ PLANNER_CONFIG = {
     "syndrome_focus_min_score": 5,
     # 缺失槽位达到该数量时切换打包追问
     "bundle_min_missing": 4,
+    # 同一冲突字段的澄清轮数上限，超限放行常规流程（防御矛盾未按预期消除时卡死）
+    "clarify_max_attempts": 2,
+    # 有脉诊证据时的置信度加成
+    "pulse_confidence_bonus": 0.08,
+    # 缺少主诉时的置信度惩罚
+    "no_chief_complaint_penalty": 0.12,
 }
 
 # 每个slot最多允许被追问多少次
@@ -220,7 +226,10 @@ class Planner:
         if risk_level == "HIGH":
             return "risk_escalation"
         if contradictions:
-            return "clarify_conflict"
+            # 防御兜底：同一冲突字段澄清超限后放行，避免极端情况下卡在澄清环节
+            conflict_field = (case_state.get("contradiction_fields") or [""])[0]
+            if case_state.get("followup_counts", {}).get(conflict_field, 0) < PLANNER_CONFIG["clarify_max_attempts"]:
+                return "clarify_conflict"
         if missing_slots:
             total_followups = sum(case_state.get("followup_counts", {}).values())
             if total_followups >= PLANNER_CONFIG["summarize_total_followups"] and len(missing_slots) >= PLANNER_CONFIG["summarize_min_missing"]:
@@ -230,8 +239,8 @@ class Planner:
             return "ask_followup_single"
         if self._should_request_pulse(case_state, risk_level, self._completion_score(case_state), missing_slots):
             return "request_pulse_input"
-        if confidence < PLANNER_CONFIG["confidence_low_threshold"]:
-            return "ask_followup_bundle"
+        # missing_slots 为空说明已无可追问槽位（填满或达限暂缓），
+        # 低置信由建议文案中的“决策把握度”体现，不再生成空追问
         return "final_advice"
 
     def _followup_mode(self, case_state, missing_slots):
@@ -252,9 +261,9 @@ class Planner:
         if risk_level == "HIGH" and case_state.get("symptoms"):
             confidence = max(confidence, PLANNER_CONFIG["high_risk_confidence_floor"])
         if case_state.get("pulse_summary"):
-            confidence += 0.08
+            confidence += PLANNER_CONFIG["pulse_confidence_bonus"]
         if not case_state.get("chief_complaint"):
-            confidence -= 0.12
+            confidence -= PLANNER_CONFIG["no_chief_complaint_penalty"]
         if contradictions:
             confidence -= PLANNER_CONFIG["contradiction_confidence_penalty"]
         return round(min(max(confidence, 0.05), 0.95), 2)
@@ -323,17 +332,15 @@ class Planner:
             return f"当前中医问诊暂偏向{syndrome_text}等方向，但仍缺少{target_text}。现有证据：{summary}。"
         return f"当前四诊证据仍不足，尤其缺少{target_text}。现有证据：{summary}。"
 
+    # 计算当前信息收集的完整度，作为后续决策的参考
+    # 口径与 _missing_slots 保持一致（通用优先级 + 主诉优先级并集），
+    # 避免“缺失队列为空但完成度很低”的口径差
     def _completion_score(self, case_state):
-        key_slots = [
-            "chief_complaint",
-            "duration",
-            "severity",
-            "location",
-            "cold_heat",
-            "appetite",
-            "sleep",
-            "stool_urine",
-        ]
+        key_slots = list(dict.fromkeys(
+            list(GENERAL_TCM_PRIORITIES) + self._chief_complaint_priorities(case_state.get("chief_complaint", ""))
+        ))
+        if not key_slots:
+            return 0.0
         filled = sum(1 for slot in key_slots if self._has_value(case_state.get(slot)))
         return round(filled / len(key_slots), 2)
 

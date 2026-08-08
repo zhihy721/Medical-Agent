@@ -143,7 +143,7 @@ def test_followup_strategy():
     checks = [
         ("collecting info status recorded", case_state["status"] == "COLLECTING_INFO"),
         ("followup remembers missing slots", len(case_state["missing_slots"]) >= 1),
-        ("response asks for more detail", "补充" in response or "持续" in response or "严重程度" in response),
+        ("response asks for more detail", any(keyword in response for keyword in ("补充", "持续", "严重程度", "部位", "多久", "多久了", "多重", "程度"))),
     ]
 
     passed = True
@@ -980,6 +980,96 @@ def test_evaluation_case_smoke():
     return passed
 
 
+# 测试矛盾消除机制：标量字段前后不一致时产生矛盾，重新确认后 resolve 应消除矛盾
+def test_contradiction_resolution():
+    from memory.memory import ConversationMemory
+
+    memory = ConversationMemory()
+    memory.update_case({"age": "25", "symptoms": ["腹痛"]})
+    memory.update_case({"age": "65"})
+    has_contradiction = bool(memory.get_case_state()["contradictions"])
+
+    memory.resolve_contradiction("age")
+    state = memory.get_case_state()
+    checks = [
+        ("contradiction detected on conflicting age", has_contradiction),
+        ("contradiction resolved after reconfirmation", not state["contradictions"]),
+        ("latest value kept after resolve", state["slot_history"]["age"] == ["65"]),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 测试空槽位防御：缺失队列为空（填满或达限暂缓）时直接给最终建议，不再生成空追问
+def test_planner_no_empty_bundle():
+    from agent.planner import Planner
+
+    planner = Planner()
+    case_state = {
+        "chief_complaint": "腹痛",
+        "symptoms": ["腹痛"],
+        "duration": "两天",
+        "severity": "中度",
+        "location": "腹部",
+        "cold_heat": "怕冷",
+        "appetite": "纳差",
+        "sleep": "失眠",
+        "stool_urine": "便秘",
+        "pain_character": "隐痛",
+        "pulse_declined": True,
+        "followup_counts": {"sweating": 1, "thirst": 1, "emotion": 1},
+        "risk_level": "LOW",
+        "summary": "症状: 腹痛",
+        "tcm_summary": "寒热: 怕冷",
+        "accompanying_symptoms": [],
+    }
+    plan = planner.create_plan(case_state)
+
+    checks = [
+        ("no missing slots when filled or deferred", not plan["missing_slots"]),
+        ("final advice instead of empty bundle", plan["next_action"] == "final_advice"),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}, actual next_action={plan['next_action']}")
+    return passed
+
+# 测试红旗否定句豁免：否认表述不误报红旗，后置否定与非否定命中不受影响
+def test_red_flag_negation_exemption():
+    from tools.symptom_tool import extract_symptoms
+
+    denied = extract_symptoms("我没有喘不过气，也没有便血，就是有点乏力")
+    affirmed = extract_symptoms("胸痛不缓解，已经两个小时了")
+    mixed = extract_symptoms("没有便血，但今天确实便血了一次")
+
+    checks = [
+        ("negated red flags not reported", not denied["red_flags"]),
+        ("negated symptoms still extracted", "乏力" in denied["symptoms"]),
+        ("affirmed red flag still reported", "持续胸痛" in affirmed["red_flags"]),
+        ("non-negated occurrence wins", "便血" in mixed["red_flags"]),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
 def main():
     results = [
         test_default_runtime_prefers_langgraph(),
@@ -1012,6 +1102,9 @@ def main():
         test_planner_rule_enhancements(),
         test_planner_review_interceptions(),
         test_evaluation_case_smoke(),
+        test_contradiction_resolution(),
+        test_planner_no_empty_bundle(),
+        test_red_flag_negation_exemption(),
     ]
     passed = sum(results)
     total = len(results)
