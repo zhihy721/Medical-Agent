@@ -54,6 +54,8 @@ def test_imports():
         "memory.profile_store",
         "memory.session_store",
         "knowledge.tcm_knowledge",
+        "tools.knowledge_tool",
+        "evaluation.run_eval",
         "agent.graph",
         "agent.factory",
         "tools.protocol",
@@ -191,10 +193,8 @@ def test_tcm_evidence_and_pulse():
 # 但会被记录为已缺失并在后续诊断中考虑其缺失状态
 def test_optional_slot_not_repeated():
     from agent.planner import Planner
-    from llm.llm import LLM
-    from llm.prompt import SYSTEM_PROMPT
 
-    planner = Planner(LLM(system_prompt=SYSTEM_PROMPT))
+    planner = Planner()
     case_state = {
         "chief_complaint": "腹痛",
         "symptoms": ["腹痛"],
@@ -848,6 +848,138 @@ def test_llm_metrics():
     return passed
 
 
+# 测试知识层外置数据：JSON 加载校验通过，口语别名能归一为规范术语
+def test_knowledge_data_loading():
+    from knowledge.tcm_knowledge import (
+        CHIEF_COMPLAINT_PRIORITIES,
+        KNOWLEDGE_VERSION,
+        SYNDROME_RULES,
+        get_red_flags,
+        get_syndrome_advice,
+        normalize_term,
+    )
+
+    advice = get_syndrome_advice("风寒束表")
+    checks = [
+        ("syndrome rules expanded", len(SYNDROME_RULES) >= 15),
+        ("syndrome rule carries advice", bool(advice["treatment_principle"]) and bool(advice["lifestyle_advice"])),
+        ("chief complaint priorities expanded", len(CHIEF_COMPLAINT_PRIORITIES) >= 10),
+        ("red flags loaded from knowledge data", len(get_red_flags()) >= 5),
+        ("knowledge versions tracked", "syndrome_rules" in KNOWLEDGE_VERSION and "red_flags" in KNOWLEDGE_VERSION),
+        ("colloquial terms normalized", normalize_term("怕冷，没胃口") == "恶寒，纳差"),
+        ("unknown text untouched", normalize_term("随意描述") == "随意描述"),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 测试知识检索工具：协议版返回标准 ToolResult，兼容层返回数据 dict，工具已注册
+def test_knowledge_retrieval_tool():
+    from tools.knowledge_tool import search_knowledge, search_knowledge_tool
+    from tools.registry import default_registry
+
+    result = search_knowledge_tool("风寒束表")
+    compat = search_knowledge("咳嗽怕冷")
+    names = {item["name"] for item in default_registry.list_tools()}
+
+    checks = [
+        ("protocol result ok", result["status"] == "ok" and result["tool"] == "knowledge_retrieval"),
+        ("hits syndrome by exact name", any(hit["type"] == "syndrome" and hit["name"] == "风寒束表" for hit in result["data"]["hits"])),
+        ("compat layer returns data dict", isinstance(compat, dict) and compat["total"] > 0),
+        ("knowledge tool registered", "knowledge_retrieval" in names),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 测试 Planner 规则增强：阈值配置化、主诉模糊匹配、证型定向追问加权
+def test_planner_rule_enhancements():
+    from agent.planner import PLANNER_CONFIG, Planner
+
+    planner = Planner()
+    fuzzy = planner._chief_complaint_priorities("咳嗽得厉害")
+    boosted = planner._syndrome_focus_slots([{"name": "风寒束表", "score": 6}])
+    low_score = planner._syndrome_focus_slots([{"name": "风寒束表", "score": 2}])
+
+    checks = [
+        ("planner config exposes thresholds", PLANNER_CONFIG.get("confidence_ready_threshold") == 0.75),
+        ("chief complaint fuzzy match", "cold_heat" in fuzzy),
+        ("syndrome focus boosts evidence slots", bool(boosted)),
+        ("low score syndrome not boosted", not low_score),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 测试 Planner review 拦截规则：高风险不宜继续追问/等脉诊，完整度不足不宜过早请求脉诊
+def test_planner_review_interceptions():
+    from agent.planner import Planner
+    from agent.router import ActionResult
+
+    planner = Planner()
+    followup_action = ActionResult(name="ask_followup", response="", status="", is_final=False, missing_slots=["sleep"])
+    review_high = planner.review_action({}, {"missing_slots": ["sleep"], "confidence": 0.5}, {"risk": "HIGH"}, followup_action)
+
+    pulse_action = ActionResult(name="request_pulse_input", response="", status="", is_final=False, missing_slots=[])
+    review_pulse = planner.review_action({}, {"completion_score": 0.3}, {"risk": "LOW"}, pulse_action)
+
+    checks = [
+        ("high risk followup intercepted", review_high["needs_replan"] and review_high["suggested_action"] == "risk_escalation"),
+        ("early pulse request intercepted", review_pulse["needs_replan"] and review_pulse["suggested_action"] == "ask_followup_bundle"),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 评测集 smoke：回放一个带标注用例走真实图链路，防止评测基线回归
+def test_evaluation_case_smoke():
+    from evaluation.run_eval import evaluate_case, load_cases
+
+    cases = load_cases(case_filter="01_high_risk_chest_pain")
+    if not cases:
+        print("[FAIL] evaluation case 01_high_risk_chest_pain not found")
+        return False
+
+    result = evaluate_case(cases[0])
+    checks = [
+        ("case loaded", result["id"] == "01_high_risk_chest_pain"),
+        ("case passes all assertions", result["pass"]),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}: {result.get('failures')}")
+    return passed
+
+
 def main():
     results = [
         test_default_runtime_prefers_langgraph(),
@@ -875,6 +1007,11 @@ def main():
         test_tool_registry_and_compat_layer(),
         test_event_logger_and_metrics_summary(),
         test_llm_metrics(),
+        test_knowledge_data_loading(),
+        test_knowledge_retrieval_tool(),
+        test_planner_rule_enhancements(),
+        test_planner_review_interceptions(),
+        test_evaluation_case_smoke(),
     ]
     passed = sum(results)
     total = len(results)

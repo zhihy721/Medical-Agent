@@ -69,6 +69,18 @@ python start.py --port 5050
 python test_system.py
 ```
 
+运行评测集（回放 12 个带标注的多轮对话剧本，默认 Mock 模式保证确定性）：
+
+```bash
+python evaluation/run_eval.py
+```
+
+只跑单个用例或查看每轮明细：
+
+```bash
+python evaluation/run_eval.py --case 04_wind_cold_full_path --verbose
+```
+
 命令行演示模式：
 
 ```bash
@@ -111,6 +123,21 @@ logs/events.jsonl                结构化事件流（执行轨迹）
 
 服务重启后长期画像与会话状态不丢失；网页侧栏的“执行轨迹”区块和 `/api/debug/trace` 接口读取的就是事件流数据。
 
+## 知识库与评测集
+
+中医知识以 JSON 数据文件外置在 `knowledge/data/`，加载时做 schema 校验（必填字段、枚举值、版本号），内容调整不需要改代码：
+
+```text
+knowledge/data/syndrome_rules.json           辨证规则（16 证型，含治则方向与调理建议）
+knowledge/data/term_normalization.json       口语别名 → 规范术语归一化表
+knowledge/data/chief_complaint_followup.json 主诉追问优先级
+knowledge/data/red_flags.json                高风险红旗信号表
+```
+
+`evaluation/cases/` 下是 12 个带逐轮断言的对话剧本，覆盖高风险急诊、典型证型完整问诊、信息不足、前后矛盾、脉诊接入与拒绝、高龄风险等场景；`evaluation/run_eval.py` 回放剧本走真实 LangGraph 链路，输出通过明细与汇总指标（风险识别准确率、收敛轮数、replan 率）。
+
+知识库内容为**演示级**示例，需经中医专业审核后方可用于实际场景。
+
 ## 项目结构
 
 ```text
@@ -121,9 +148,10 @@ templates/index.html   配置页、问诊页和运行状态侧栏
 agent/                 Agent 编排、路由和控制器
 llm/                   LLM 调用封装（含埋点与指标累计）
 memory/                会话记忆、用户画像与 JSON 文件持久化
-tools/                 症状、风险、指南工具，及工具协议与注册表
-knowledge/             中医知识结构
+tools/                 症状、风险、指南、知识检索工具，及工具协议与注册表
+knowledge/             中医知识结构；data/ 下为外置知识数据（JSON）
 observability/         日志、JSONL 事件流与指标汇总
+evaluation/            评测集：多轮对话剧本与回放评测脚本
 test_system.py         系统检查脚本
 ```
 
@@ -137,6 +165,10 @@ test_system.py         系统检查脚本
 - 长期用户画像和短期会话状态分离，JSON 文件持久化，重启不丢失
 - LangGraph 作为默认 Agent runtime
 - 统一工具协议（ToolResult + 版本 + 异常降级）与工具注册表
+- 中医知识外置化：辨证规则、术语归一化、主诉追问、红旗信号均由 `knowledge/data/` 驱动
+- 知识检索工具（纯 Python 加权打分，零外部依赖），指南建议附治则方向与调理建议
+- Planner 纯规则决策：阈值配置化、主诉模糊匹配、证型定向追问、review 拦截高风险/过早收束
+- 系统化评测集：12 个带标注剧本回放真实图链路，输出风险准确率、收敛轮数、replan 率
 - 可观测性：统一日志、结构化事件流、LLM 耗时/token 指标、网页侧栏执行轨迹
 - 调试接口 `/api/debug/trace`：查看当前会话的节点耗时、风险结果与 replan 记录
 
