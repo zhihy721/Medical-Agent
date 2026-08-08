@@ -1,0 +1,19 @@
+{
+  "id": "06_age_contradiction",
+  "description": "年龄前后矛盾时应优先澄清冲突而不是继续追问",
+  "turns": [
+    {
+      "user": "我今年25岁，胃痛，肚子有点不舒服，轻度疼痛",
+      "expect": {
+        "symptoms_contain": ["腹痛"],
+        "slots_filled": ["age", "severity"]
+      }
+    },
+    {
+      "user": "说错了，我其实是65岁",
+      "expect": {
+        "next_action": "clarify_conflict"
+      }
+    }
+  ]
+}

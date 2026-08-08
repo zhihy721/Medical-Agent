@@ -1,0 +1,37 @@
+{
+  "id": "04_wind_cold_full_path",
+  "description": "典型风寒束表多轮问诊：信息收敛、请求脉诊、用户回复视为跳过脉诊后输出最终建议",
+  "turns": [
+    {
+      "user": "我咳嗽两天了，比较怕冷，身上不出汗",
+      "expect": {
+        "risk": "LOW",
+        "symptoms_contain": ["咳嗽"],
+        "slots_filled": ["cold_heat", "sweating"]
+      }
+    },
+    {
+      "user": "程度是中度的，胸口这个位置不舒服，最近食欲差，吃不下东西",
+      "expect": {
+        "slots_filled": ["severity", "location", "appetite"]
+      }
+    },
+    {
+      "user": "最近有点便溏，也不太想喝水",
+      "expect": {
+        "slots_filled": ["stool_urine", "thirst"],
+        "next_action": "request_pulse_input"
+      }
+    },
+    {
+      "user": "晚上有点失眠，其他还好",
+      "expect": {
+        "slots_filled": ["sleep"],
+        "next_action": "final_advice",
+        "is_final": true,
+        "syndromes_contain": ["风寒束表"],
+        "response_contain": ["不能替代医生面诊"]
+      }
+    }
+  ]
+}

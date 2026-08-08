@@ -1,0 +1,15 @@
+{
+  "id": "11_pulse_data_inject",
+  "description": "注入脉诊数据后应与问诊证据合并参与辨证",
+  "turns": [
+    {
+      "pulse_data": {"pulse_summary": "浮紧", "pulse_signal_quality": "良好"},
+      "user": "我咳嗽三天了，比较怕冷",
+      "expect": {
+        "slots_filled": ["pulse_summary"],
+        "syndromes_contain": ["风寒束表"],
+        "symptoms_contain": ["咳嗽"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "08_fever_cough_medium",
+  "description": "发热伴咳嗽属于中风险组合，应继续收集信息",
+  "turns": [
+    {
+      "user": "我有点发烧，还咳嗽",
+      "expect": {
+        "risk": "MEDIUM",
+        "is_final": false,
+        "symptoms_contain": ["发热", "咳嗽"],
+        "next_action_any": ["ask_followup_single", "ask_followup_bundle", "summarize_progress"]
+      }
+    }
+  ]
+}

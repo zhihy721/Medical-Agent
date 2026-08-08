@@ -1,0 +1,15 @@
+{
+  "id": "05_liver_stagnation",
+  "description": "胸痛胀痛伴情志变化，应偏向肝郁气滞并谨慎分诊",
+  "turns": [
+    {
+      "user": "我胸口痛，是胀痛那种，最近特别容易生气，也经常焦虑",
+      "expect": {
+        "risk": "MEDIUM",
+        "is_final": false,
+        "syndromes_contain": ["肝郁气滞"],
+        "symptoms_contain": ["胸痛"]
+      }
+    }
+  ]
+}

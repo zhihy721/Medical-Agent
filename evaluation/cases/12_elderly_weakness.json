@@ -1,0 +1,15 @@
+{
+  "id": "12_elderly_weakness",
+  "description": "高龄患者出现症状应至少提高警惕到中风险",
+  "turns": [
+    {
+      "user": "我今年70岁，最近一周总觉得乏力",
+      "expect": {
+        "risk": "MEDIUM",
+        "is_final": false,
+        "symptoms_contain": ["乏力"],
+        "slots_filled": ["age", "duration"]
+      }
+    }
+  ]
+}

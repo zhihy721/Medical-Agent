@@ -1,0 +1,17 @@
+{
+  "id": "01_high_risk_chest_pain",
+  "description": "胸痛伴呼吸困难，应识别红旗并立即高风险升级",
+  "turns": [
+    {
+      "user": "我胸口痛得很厉害，而且有点喘不过气来",
+      "expect": {
+        "risk": "HIGH",
+        "next_action": "risk_escalation",
+        "is_final": true,
+        "symptoms_contain": ["胸痛", "呼吸困难"],
+        "red_flags_contain": ["呼吸困难"],
+        "response_contain": ["就医"]
+      }
+    }
+  ]
+}

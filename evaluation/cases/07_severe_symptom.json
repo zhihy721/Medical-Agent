@@ -1,0 +1,16 @@
+{
+  "id": "07_severe_symptom",
+  "description": "重度症状无论类型都应升级为高风险",
+  "turns": [
+    {
+      "user": "我头痛得很厉害，非常严重，受不了",
+      "expect": {
+        "risk": "HIGH",
+        "next_action": "risk_escalation",
+        "is_final": true,
+        "symptoms_contain": ["头痛"],
+        "response_contain": ["就医"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "10_bloody_stool",
+  "description": "便血属于红旗信号，应高风险升级",
+  "turns": [
+    {
+      "user": "我今天便血了，颜色偏暗，有点担心",
+      "expect": {
+        "risk": "HIGH",
+        "next_action": "risk_escalation",
+        "is_final": true,
+        "red_flags_contain": ["便血"],
+        "response_contain": ["就医"]
+      }
+    }
+  ]
+}

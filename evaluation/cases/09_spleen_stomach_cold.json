@@ -1,0 +1,21 @@
+{
+  "id": "09_spleen_stomach_cold",
+  "description": "腹痛腹泻伴怕冷喜温纳差便溏，应偏向脾胃虚寒",
+  "turns": [
+    {
+      "user": "我腹痛还拉肚子，有点怕冷，喜欢温的东西",
+      "expect": {
+        "symptoms_contain": ["腹痛", "腹泻"],
+        "slots_filled": ["cold_heat"]
+      }
+    },
+    {
+      "user": "食欲差吃不下东西，而且一直拉稀",
+      "expect": {
+        "risk": "LOW",
+        "syndromes_contain": ["脾胃虚寒"],
+        "slots_filled": ["appetite", "stool_urine"]
+      }
+    }
+  ]
+}

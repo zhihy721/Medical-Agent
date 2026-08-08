@@ -1,0 +1,14 @@
+{
+  "id": "03_insufficient_info",
+  "description": "信息严重不足时应继续追问而不是给出结论",
+  "turns": [
+    {
+      "user": "我感觉不太舒服",
+      "expect": {
+        "risk": "UNKNOWN",
+        "next_action_any": ["ask_followup_single", "ask_followup_bundle", "summarize_progress"],
+        "is_final": false
+      }
+    }
+  ]
+}
