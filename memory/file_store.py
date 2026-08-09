@@ -6,6 +6,7 @@ JSON 文件 I/O 基础工具。
 """
 
 import json
+import os
 from pathlib import Path
 
 
@@ -35,11 +36,15 @@ def write_json_file(path, data):
     将数据写入 JSON 文件。
 
     自动创建父目录，使用 ensure_ascii=False 保留中文，indent=2 便于阅读。
+    先写同目录临时文件再 os.replace 原子替换，
+    避免写一半时进程退出导致会话/画像文件损坏。
     """
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    with file_path.open("w", encoding="utf-8") as f:
+    tmp_path = file_path.with_name(file_path.name + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, file_path)
 
 
 def delete_json_file(path):
