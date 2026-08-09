@@ -1,5 +1,8 @@
 import os
+import threading
+import time
 import uuid
+from collections import OrderedDict
 
 from flask import Flask, jsonify, render_template, request, session
 
@@ -26,8 +29,59 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "medical-agent-demo-secret")
 
 apply_config_to_environment()
 llm = LLM(system_prompt=SYSTEM_PROMPT)
-agent_sessions = {}
 agent_runtime = get_agent_runtime()
+
+
+class SessionCache:
+    """Web 会话缓存：TTL 过期驱逐 + 容量上限 LRU 淘汰 + 每会话锁。
+
+    避免 agent_sessions 字典无界增长导致内存泄漏，
+    并串行化同一会话的并发请求，防止 case_state 与 JSON 会话文件被并发覆盖。
+    clock 可注入以便测试。
+    """
+
+    def __init__(self, ttl_seconds=1800, max_entries=128, clock=None):
+        self._entries = OrderedDict()
+        self._ttl = ttl_seconds
+        self._max = max_entries
+        self._clock = clock or time.monotonic
+        self._mu = threading.Lock()
+
+    def get_or_create(self, session_id, factory):
+        """返回会话条目 {agent, lock, last_access}，不存在则用 factory 创建。"""
+        now = self._clock()
+        with self._mu:
+            self._evict_expired(now)
+            entry = self._entries.get(session_id)
+            if entry is None:
+                while len(self._entries) >= self._max:
+                    self._entries.popitem(last=False)
+                entry = {"agent": factory(), "lock": threading.Lock(), "last_access": now}
+                self._entries[session_id] = entry
+            else:
+                entry["last_access"] = now
+                self._entries.move_to_end(session_id)
+            return entry
+
+    def remove(self, session_id):
+        with self._mu:
+            self._entries.pop(session_id, None)
+
+    def clear(self):
+        with self._mu:
+            self._entries.clear()
+
+    def _evict_expired(self, now):
+        expired = [sid for sid, entry in self._entries.items() if now - entry["last_access"] > self._ttl]
+        for sid in expired:
+            self._entries.pop(sid, None)
+
+    def __len__(self):
+        with self._mu:
+            return len(self._entries)
+
+
+session_cache = SessionCache()
 
 _config = read_config()
 _data_dir = _config.get("DATA_DIR", "data")
@@ -46,7 +100,7 @@ def _reload_runtime():
     apply_config_to_environment()
     llm = LLM(system_prompt=SYSTEM_PROMPT)
     agent_runtime = get_agent_runtime()
-    agent_sessions.clear()
+    session_cache.clear()
 
 
 def _config_from_payload(payload):
@@ -80,21 +134,21 @@ def _get_agent():
         session_id = str(uuid.uuid4())
         session["session_id"] = session_id
 
-    if session_id not in agent_sessions:
+    def _factory():
         memory = ConversationMemory(
             profile_store=profile_store,
             user_id=user_id,
             session_store=session_store,
             session_id=session_id,
         )
-        agent_sessions[session_id] = create_agent(
+        return create_agent(
             llm=llm,
             memory=memory,
             runtime=agent_runtime,
             thread_id=session_id,
         )
 
-    return agent_sessions[session_id]
+    return session_cache.get_or_create(session_id, _factory)
 
 
 @app.route("/")
@@ -169,12 +223,15 @@ def api_reload_config():
 
 @app.route("/status", methods=["GET"])
 def status():
-    agent = _get_agent()
-    snapshot = agent.get_case_snapshot()
+    entry = _get_agent()
+    agent = entry["agent"]
+    with entry["lock"]:
+        snapshot = agent.get_case_snapshot()
     return jsonify(
         {
             "case_state": snapshot,
             "llm_status": snapshot.get("llm_status", {}),
+            "llm_degraded": bool(snapshot.get("llm_status", {}).get("degraded")),
             "agent_runtime": getattr(agent, "runtime_name", agent_runtime),
             "config_status": get_config_status(),
             "metrics": llm.get_metrics(),
@@ -190,14 +247,18 @@ def chat():
         return jsonify({"response": "请输入有效的症状描述或问题。"})
 
     try:
-        agent = _get_agent()
-        response = agent.run(user_input)
-        snapshot = agent.get_case_snapshot()
+        entry = _get_agent()
+        agent = entry["agent"]
+        # 同一会话串行化：避免并发请求互相覆盖 case_state 与会话文件
+        with entry["lock"]:
+            response = agent.run(user_input)
+            snapshot = agent.get_case_snapshot()
         return jsonify(
             {
                 "response": response,
                 "case_state": snapshot,
                 "llm_status": snapshot.get("llm_status", {}),
+                "llm_degraded": bool(snapshot.get("llm_status", {}).get("degraded")),
                 "agent_runtime": getattr(agent, "runtime_name", agent_runtime),
                 "config_status": get_config_status(),
                 "metrics": llm.get_metrics(),
@@ -229,10 +290,11 @@ def api_debug_trace():
 @app.route("/reset", methods=["POST"])
 def reset():
     session_id = session.get("session_id")
-    if session_id in agent_sessions:
-        del agent_sessions[session_id]
+    if session_id:
+        session_cache.remove(session_id)
     session["session_id"] = str(uuid.uuid4())
-    agent = _get_agent()
+    entry = _get_agent()
+    agent = entry["agent"]
     snapshot = agent.get_case_snapshot()
     return jsonify(
         {
