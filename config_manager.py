@@ -117,13 +117,20 @@ def _validate_config(config):
     if provider not in {"deepseek", "auto", "mock"}:
         raise ValueError("LLM_PROVIDER must be one of: deepseek, auto, mock")
 
-    max_tokens = int(config.get("DEEPSEEK_MAX_TOKENS", "512"))
+    # 解析失败时给出含字段名的友好提示，避免前端只看到裸的 int()/float() 异常
+    try:
+        max_tokens = int(config.get("DEEPSEEK_MAX_TOKENS", "512"))
+    except (TypeError, ValueError):
+        raise ValueError("DEEPSEEK_MAX_TOKENS 必须为正整数")
     if max_tokens <= 0:
-        raise ValueError("DEEPSEEK_MAX_TOKENS must be greater than 0")
+        raise ValueError("DEEPSEEK_MAX_TOKENS 必须为正整数")
 
-    temperature = float(config.get("DEEPSEEK_TEMPERATURE", "0.2"))
+    try:
+        temperature = float(config.get("DEEPSEEK_TEMPERATURE", "0.2"))
+    except (TypeError, ValueError):
+        raise ValueError("DEEPSEEK_TEMPERATURE 必须为 0 到 2 之间的数字")
     if temperature < 0 or temperature > 2:
-        raise ValueError("DEEPSEEK_TEMPERATURE must be between 0 and 2")
+        raise ValueError("DEEPSEEK_TEMPERATURE 必须为 0 到 2 之间的数字")
 
 
 def _serialize_config(config):

@@ -1070,6 +1070,226 @@ def test_red_flag_negation_exemption():
     return passed
 
 
+# 测试 classic 运行时的矛盾消除对齐：澄清回复后以最新值消除矛盾（与 LangGraph 路径一致）
+def test_classic_runtime_resolves_contradiction():
+    import agent.controller as controller_module
+    from agent.controller import MedicalAgent
+    from llm.llm import LLM
+    from memory.memory import ConversationMemory
+
+    memory = ConversationMemory()
+    memory.update_case({"age": "25", "symptoms": ["腹痛"]})
+    memory.update_case({"age": "65"})
+    memory.update_triage(last_action="clarify_conflict", followup_slot="age")
+    had_contradiction = bool(memory.get_case_state()["contradictions"])
+
+    original_extract = controller_module.extract_case_slots
+    controller_module.extract_case_slots = lambda llm, user_input: {"age": "65"}
+    try:
+        agent = MedicalAgent(LLM(provider="mock"), memory)
+        agent.run("我确实是65岁，没说错")
+    finally:
+        controller_module.extract_case_slots = original_extract
+
+    state = memory.get_case_state()
+    checks = [
+        ("contradiction existed before reconfirmation", had_contradiction),
+        ("classic runtime resolves contradiction after clarify reply", not state["contradictions"]),
+        ("latest age kept in slot_history", state["slot_history"].get("age") == ["65"]),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
+# 测试 SessionCache：同 key 复用实例、TTL 过期驱逐、超限按最旧淘汰
+def test_session_cache_lifecycle():
+    from app import SessionCache
+
+    class FakeClock:
+        def __init__(self):
+            self.now = 0.0
+
+        def __call__(self):
+            return self.now
+
+    clock = FakeClock()
+    created = {}
+
+    def make_factory(key):
+        def factory():
+            created[key] = created.get(key, 0) + 1
+            return {"id": key}
+
+        return factory
+
+    cache = SessionCache(ttl_seconds=100, max_entries=2, clock=clock)
+    first = cache.get_or_create("a", make_factory("a"))
+    same = cache.get_or_create("a", make_factory("a"))
+
+    clock.now = 101
+    renewed = cache.get_or_create("a", make_factory("a"))
+
+    lru_cache = SessionCache(ttl_seconds=100, max_entries=2, clock=clock)
+    clock.now = 200
+    lru_cache.get_or_create("x", make_factory("x"))
+    clock.now = 201
+    lru_cache.get_or_create("y", make_factory("y"))
+    clock.now = 202
+    lru_cache.get_or_create("x", make_factory("x"))
+    clock.now = 203
+    lru_cache.get_or_create("z", make_factory("z"))
+
+    checks = [
+        ("same session returns same agent instance", first["agent"] is same["agent"]),
+        ("expired entry is recreated", renewed["agent"] is not first["agent"]),
+        ("lru evicts least recently used", len(lru_cache) == 2),
+        ("recently accessed entry survives eviction", created.get("x") == 1 and created.get("z") == 1),
+        ("oldest untouched entry is evicted", created.get("y") == 1),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
+# 测试 JSON 原子写：写入后无临时文件残留，损坏的目标文件可被正确覆盖
+def test_atomic_json_write():
+    import tempfile
+
+    from memory.file_store import read_json_file, write_json_file
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        target = os.path.join(tmpdir, "session.json")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write("{broken")
+
+        write_json_file(target, {"case_state": {"age": "25"}})
+        data = read_json_file(target)
+        tmp_leftover = os.path.exists(target + ".tmp")
+
+    checks = [
+        ("corrupted file replaced with valid json", data == {"case_state": {"age": "25"}}),
+        ("no tmp file left behind", not tmp_leftover),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
+# 测试 LLM 重试与降级透明化：网络异常重试一次后降级 mock，状态字段如实暴露
+def test_llm_retry_and_degradation_transparency():
+    import llm.llm as llm_module
+    from llm.llm import LLM
+
+    class FakeRequestError(Exception):
+        pass
+
+    class FakeRequests:
+        RequestException = FakeRequestError
+
+        def __init__(self):
+            self.calls = 0
+
+        def post(self, *args, **kwargs):
+            self.calls += 1
+            raise FakeRequestError("network down")
+
+    fake = FakeRequests()
+    original_requests = llm_module.requests
+    llm_module.requests = fake
+    llm = LLM(provider="deepseek")
+    original_url = os.environ.get("DEEPSEEK_API_URL")
+    original_key = os.environ.get("DEEPSEEK_API_KEY")
+    os.environ["DEEPSEEK_API_URL"] = "http://example.invalid/v1/chat/completions"
+    os.environ["DEEPSEEK_API_KEY"] = "test-key"
+    try:
+        result = llm.call("你好")
+    finally:
+        llm_module.requests = original_requests
+        if original_url is None:
+            os.environ.pop("DEEPSEEK_API_URL", None)
+        else:
+            os.environ["DEEPSEEK_API_URL"] = original_url
+        if original_key is None:
+            os.environ.pop("DEEPSEEK_API_KEY", None)
+        else:
+            os.environ["DEEPSEEK_API_KEY"] = original_key
+
+    status = llm.get_runtime_status()
+    checks = [
+        ("network failure retried once", fake.calls == 2),
+        ("fell back to mock after retries", llm.last_provider_used == "mock" and bool(result)),
+        ("degraded flag exposed in status", status["degraded"] is True),
+        ("fallback timestamp recorded", bool(status["last_fallback_at"])),
+        ("last_error recorded", bool(status["last_error"])),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
+# 测试配置校验友好化：非数字参数抛出含字段名的明确错误
+def test_config_validation_friendly_errors():
+    from config_manager import _validate_config
+
+    def expect_field_error(config, field):
+        try:
+            _validate_config(config)
+            return False
+        except ValueError as exc:
+            return field in str(exc)
+
+    checks = [
+        (
+            "non-numeric max_tokens raises friendly error",
+            expect_field_error(
+                {"LLM_PROVIDER": "deepseek", "DEEPSEEK_MAX_TOKENS": "abc", "DEEPSEEK_TEMPERATURE": "0.2"},
+                "DEEPSEEK_MAX_TOKENS",
+            ),
+        ),
+        (
+            "non-numeric temperature raises friendly error",
+            expect_field_error(
+                {"LLM_PROVIDER": "deepseek", "DEEPSEEK_MAX_TOKENS": "512", "DEEPSEEK_TEMPERATURE": "abc"},
+                "DEEPSEEK_TEMPERATURE",
+            ),
+        ),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
 def main():
     results = [
         test_default_runtime_prefers_langgraph(),
@@ -1105,6 +1325,11 @@ def main():
         test_contradiction_resolution(),
         test_planner_no_empty_bundle(),
         test_red_flag_negation_exemption(),
+        test_classic_runtime_resolves_contradiction(),
+        test_session_cache_lifecycle(),
+        test_atomic_json_write(),
+        test_llm_retry_and_degradation_transparency(),
+        test_config_validation_friendly_errors(),
     ]
     passed = sum(results)
     total = len(results)
