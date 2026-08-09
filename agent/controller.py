@@ -12,6 +12,7 @@ from agent.runtime_utils import (
     extract_case_slots,
     handle_post_pulse_reply,
     render_response,
+    resolve_clarified_contradiction,
     sync_action_to_memory,
     sync_plan_to_memory,
     sync_review_to_memory,
@@ -55,6 +56,8 @@ class MedicalAgent:
 
         extracted_slots = extract_case_slots(self.llm, user_input)
         self.memory.update_case(extracted_slots)
+        # 与 LangGraph 路径对齐：澄清回复后以最新值消除矛盾
+        resolve_clarified_contradiction(self.memory, extracted_slots)
         case_state, risk_result, guideline_result, plan, action_result = self._run_agent_loop()
 
         response = render_response(

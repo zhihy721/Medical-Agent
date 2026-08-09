@@ -7,6 +7,11 @@ from agent.controller import MedicalAgent
 from memory.memory import ConversationMemory
 
 # 用环境变量控制系统运行模式，默认为LangGraph
+from observability.logger import get_logger
+
+_logger = get_logger("agent.factory")
+
+
 def get_agent_runtime():
     # LangGraph是现在的默认编排运行时，保留运行时
     # 此处选择允许在调试或比较行为时显式地回退到经典控制器
@@ -46,6 +51,10 @@ def create_agent(llm, memory=None, runtime=None, thread_id=None):
         )
 
     # Classic is now an explicit compatibility fallback rather than the main path.
+    _logger.warning(
+        "AGENT_RUNTIME=classic is deprecated: behavior fixes (e.g. contradiction "
+        "resolution) land on the LangGraph path first. Use AGENT_RUNTIME=langgraph."
+    )
     agent = MedicalAgent(llm=llm, memory=memory)
     agent.runtime_name = "classic"
     return agent
