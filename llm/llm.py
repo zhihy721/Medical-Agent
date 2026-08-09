@@ -25,6 +25,9 @@ class LLM:
         self.provider = (provider or os.getenv("LLM_PROVIDER", "deepseek")).lower()
         self.last_provider_used = "mock"
         self.last_error = ""
+        # 降级透明化：最近一次调用是否降级为 mock，以及最近降级时间
+        self.degraded = False
+        self.last_fallback_at = ""
         # 指标累计器：调用次数、耗时、token 用量、降级与错误次数
         self._metrics = {
             "call_count": 0,
@@ -50,6 +53,8 @@ class LLM:
             "deepseek_configured": self.is_deepseek_configured(),
             "last_provider_used": self.last_provider_used,
             "last_error": self.last_error,
+            "degraded": self.degraded,
+            "last_fallback_at": self.last_fallback_at,
             "metrics": self.get_metrics(),
         }
 
@@ -71,6 +76,7 @@ class LLM:
             try:
                 result = self._deepseek_call(prompt)
                 self.last_provider_used = "deepseek"
+                self.degraded = False
                 self._record_call(started, fallback)
                 return result
             except Exception as exc:
@@ -79,6 +85,8 @@ class LLM:
 
         self.last_provider_used = "mock"
         fallback = True
+        self.degraded = True
+        self.last_fallback_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         if not self.last_error:
             self.last_error = "DeepSeek is unavailable, fallback to mock."
         result = self._mock_call(prompt)
@@ -138,7 +146,20 @@ class LLM:
             "Content-Type": "application/json",
         }
 
-        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+        # 重试一次：网络异常/超时或 5xx 服务端错误才重试，4xx 等客户端错误直接降级
+        response = None
+        for attempt in range(2):
+            try:
+                response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+            except requests.RequestException:
+                if attempt == 0:
+                    time.sleep(0.5)
+                    continue
+                raise
+            if response.status_code < 500 or attempt == 1:
+                break
+            _logger.info("DeepSeek returned %s, retrying once", response.status_code)
+            time.sleep(0.5)
         response.raise_for_status()
         data = response.json()
         # 记录 token 用量，供 metrics 与事件流使用
