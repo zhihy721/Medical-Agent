@@ -1045,6 +1045,56 @@ def test_planner_no_empty_bundle():
             print(f"[FAIL] {label}, actual next_action={plan['next_action']}")
     return passed
 
+# 测试 RAG 前置语料与检索：语料 schema 校验、BM25 命中排序、knowledge_tool 合并输出
+def test_corpus_knowledge_and_retrieval():
+    from knowledge.tcm_knowledge import KNOWLEDGE_VERSION, SYNDROME_RULES, get_corpus
+    from knowledge.retriever import DEFAULT_RETRIEVER
+    from tools.knowledge_tool import search_knowledge
+
+    corpus = get_corpus()
+    ids = [entry["id"] for entry in corpus]
+    syndrome_names = {rule["name"] for rule in SYNDROME_RULES}
+    schema_ok = (
+        len(corpus) >= 30
+        and len(set(ids)) == len(ids)
+        and all(entry.get("title") and entry.get("content") and entry.get("tags") for entry in corpus)
+        and all(s in syndrome_names for entry in corpus for s in entry.get("syndromes", []))
+        and {"formulas", "health_advice", "faq"} <= set(KNOWLEDGE_VERSION)
+    )
+
+    formula_top = DEFAULT_RETRIEVER.search("桂枝汤", top_k=1)
+    faq_top = DEFAULT_RETRIEVER.search("感冒了能喝姜汤吗", top_k=1)
+    advice_hits = DEFAULT_RETRIEVER.search("风寒束表调护", top_k=5)
+    empty_hits = DEFAULT_RETRIEVER.search("qwerty", top_k=3)
+
+    merged = search_knowledge("柴胡疏肝散")
+    merged_corpus = [hit for hit in merged["hits"] if hit["type"] == "corpus"]
+
+    checks = [
+        ("corpus schema validated with syndrome linkage", schema_ok),
+        ("formula query ranks exact formula first", bool(formula_top) and formula_top[0]["id"] == "f_guizhi_tang"),
+        ("faq query ranks matching answer first", bool(faq_top) and faq_top[0]["id"] == "faq_cold_ginger_soup"),
+        (
+            "advice query hits linked advice entries",
+            any(hit["category"] in {"饮食", "起居"} and hit["id"].startswith("ha_wind_cold") for hit in advice_hits),
+        ),
+        ("noisy query returns empty", empty_hits == []),
+        (
+            "knowledge tool merges corpus hits",
+            any(hit["name"] == "柴胡疏肝散" for hit in merged_corpus) and all(hit.get("source") for hit in merged_corpus),
+        ),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
 # 测试红旗否定句豁免：否认表述不误报红旗，后置否定与非否定命中不受影响
 def test_red_flag_negation_exemption():
     from tools.symptom_tool import extract_symptoms
@@ -1372,6 +1422,7 @@ def main():
         test_llm_retry_and_degradation_transparency(),
         test_config_validation_friendly_errors(),
         test_risk_rules_externalized(),
+        test_corpus_knowledge_and_retrieval(),
     ]
     passed = sum(results)
     total = len(results)

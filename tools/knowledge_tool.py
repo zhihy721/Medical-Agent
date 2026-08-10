@@ -1,5 +1,7 @@
-# 中医知识检索工具：在证型规则、术语归一化、主诉追问优先级中做加权检索
+# 中医知识检索工具：在证型规则、术语归一化、主诉追问优先级中做加权检索，
+# 并合并方剂/调护/FAQ 语料的 BM25 命中（corpus 类型，为后续 RAG 预留接口）
 # 纯 Python 实现（包含匹配 + 字段加权打分），零外部依赖，结果确定性强
+from knowledge.retriever import DEFAULT_RETRIEVER
 from knowledge.tcm_knowledge import (
     CHIEF_COMPLAINT_PRIORITIES,
     KNOWLEDGE_VERSION,
@@ -8,7 +10,8 @@ from knowledge.tcm_knowledge import (
 )
 from tools.protocol import managed_tool
 
-TOOL_VERSION = "1.0"
+# 1.1：合并方剂/调护/FAQ 语料检索（corpus 命中，BM25 打分归一后与结构化命中统一排序）
+TOOL_VERSION = "1.1"
 
 # 加权配置：不同匹配位置的重要性不同
 _SCORES = {
@@ -21,6 +24,9 @@ _SCORES = {
     "term_alias": 3,
     "chief_complaint": 5,
 }
+
+# 语料命中的顶部得分映射值：介于证型精确命中（10）与证型部分命中（6）之间
+_CORPUS_TOP_SCORE = 8.0
 
 
 def _search_syndromes(query):
@@ -98,14 +104,38 @@ def _search_chief_complaints(query):
     return hits
 
 
-@managed_tool("knowledge_retrieval", TOOL_VERSION, "检索中医知识库：证型规则、术语归一化与主诉追问优先级")
+def _search_corpus(query, top_k):
+    """语料检索：BM25 命中按比例归一到统一加权区间，便于与结构化命中同序比较。"""
+    raw = DEFAULT_RETRIEVER.search(query, top_k=top_k)
+    if not raw:
+        return []
+    scale = _CORPUS_TOP_SCORE / raw[0]["score"]
+    return [
+        {
+            "type": "corpus",
+            "name": item["title"],
+            "id": item["id"],
+            "score": round(item["score"] * scale, 2),
+            "category": item["category"],
+            "source": item["source"],
+        }
+        for item in raw
+    ]
+
+
+@managed_tool("knowledge_retrieval", TOOL_VERSION, "检索中医知识库：证型规则、术语归一化、主诉追问优先级与方剂/调护/FAQ 语料")
 def search_knowledge_tool(query, top_k=5):
     """协议版入口：返回标准 ToolResult，异常由 managed_tool 捕获。"""
     query = (query or "").strip()
     if not query:
         return {"query": "", "hits": [], "total": 0, "knowledge_version": KNOWLEDGE_VERSION}
 
-    hits = _search_syndromes(query) + _search_terms(query) + _search_chief_complaints(query)
+    hits = (
+        _search_syndromes(query)
+        + _search_terms(query)
+        + _search_chief_complaints(query)
+        + _search_corpus(query, top_k)
+    )
     hits.sort(key=lambda item: (-item["score"], item["name"]))
     top_k = max(1, min(int(top_k), 20))
     return {
