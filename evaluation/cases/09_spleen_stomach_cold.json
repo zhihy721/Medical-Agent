@@ -14,7 +14,9 @@
       "expect": {
         "risk": "LOW",
         "syndromes_contain": ["脾胃虚寒"],
-        "slots_filled": ["appetite", "stool_urine"]
+        "slots_filled": ["appetite", "stool_urine"],
+        "knowledge_query": "脾胃虚寒",
+        "knowledge_hits_contain": ["理中丸", "脾胃虚寒饮食调护"]
       }
     }
   ]

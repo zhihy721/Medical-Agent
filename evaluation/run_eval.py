@@ -26,7 +26,9 @@
             "red_flags_contain": ["呼吸困难"],       // case_state.red_flags 包含
             "syndromes_contain": ["风寒束表"],       // plan.syndrome_candidates 包含
             "slots_filled": ["cold_heat"],           // 槽位已填充
-            "response_contain": ["就医"]             // 回复文本包含
+            "response_contain": ["就医"],            // 回复文本包含
+            "knowledge_query": "桂枝汤",             // 直接调知识检索（可选）
+            "knowledge_hits_contain": ["桂枝汤"]     // 检索命中名称包含（可选）
           }
         }
       ]
@@ -48,6 +50,7 @@ from agent.factory import create_agent  # noqa: E402
 from llm.llm import LLM  # noqa: E402
 from llm.prompt import SYSTEM_PROMPT  # noqa: E402
 from memory.memory import ConversationMemory  # noqa: E402
+from tools.knowledge_tool import search_knowledge  # noqa: E402
 
 CASES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases")
 
@@ -153,6 +156,14 @@ def check_turn(expect, record):
     for fragment in expect.get("response_contain", []):
         if fragment not in record["response"]:
             failures.append(f"response 未包含 {fragment!r}")
+
+    # 知识检索断言：直接调 search_knowledge 校验命中，不依赖主流程的调用时机
+    if "knowledge_query" in expect:
+        retrieval = search_knowledge(expect["knowledge_query"])
+        hit_names = [hit["name"] for hit in retrieval["hits"]]
+        for wanted in expect.get("knowledge_hits_contain", []):
+            if wanted not in hit_names:
+                failures.append(f"knowledge 命中未包含 {wanted}，实际 {hit_names}")
 
     return failures, flag_tp, flag_fp, flag_fn
 

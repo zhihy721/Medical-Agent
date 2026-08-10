@@ -8,7 +8,9 @@
         "risk": "MEDIUM",
         "is_final": false,
         "syndromes_contain": ["肝郁气滞"],
-        "symptoms_contain": ["胸痛"]
+        "symptoms_contain": ["胸痛"],
+        "knowledge_query": "柴胡疏肝散",
+        "knowledge_hits_contain": ["柴胡疏肝散"]
       }
     }
   ]
