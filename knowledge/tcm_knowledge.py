@@ -12,6 +12,18 @@ _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 # 红旗信号优先级枚举，校验时使用
 _FLAG_PRIORITIES = {"HIGH", "MEDIUM"}
 
+# 风险分层规则允许的风险等级与 when 条件键
+_RISK_LEVELS = {"HIGH", "MEDIUM", "LOW"}
+_RISK_CONDITION_KEYS = {
+    "symptoms_all",
+    "symptoms_any",
+    "union_any",
+    "severity_in",
+    "past_history_any",
+    "age_gte",
+    "require_symptoms",
+}
+
 
 class KnowledgeLoadError(ValueError):
     """知识文件缺失或结构校验失败时抛出，带明确的定位信息。"""
@@ -201,17 +213,51 @@ def _load_red_flags():
     return flags, data.get("version", "")
 
 
+def _load_risk_rules():
+    data = _load_json("risk_rules.json")
+    rules = data.get("rules")
+    if not isinstance(rules, list) or not rules:
+        raise KnowledgeLoadError("risk_rules.json 缺少 rules 列表")
+
+    for index, rule in enumerate(rules):
+        context = f"risk_rules.json rules[{index}]"
+        rule_id = rule.get("id")
+        if not rule_id or not isinstance(rule_id, str):
+            raise KnowledgeLoadError(f"{context} 缺少 id")
+        if rule.get("risk") not in _RISK_LEVELS:
+            raise KnowledgeLoadError(f"{context}（{rule_id}）risk 必须是 {sorted(_RISK_LEVELS)} 之一")
+
+        when = rule.get("when")
+        if not isinstance(when, dict) or not when:
+            raise KnowledgeLoadError(f"{context}（{rule_id}）缺少 when 条件字典")
+        unknown_keys = set(when) - _RISK_CONDITION_KEYS
+        if unknown_keys:
+            raise KnowledgeLoadError(f"{context}（{rule_id}）含未知条件键 {sorted(unknown_keys)}")
+
+        if not isinstance(rule.get("reason"), str) or not rule["reason"]:
+            raise KnowledgeLoadError(f"{context}（{rule_id}）缺少 reason")
+        if not isinstance(rule.get("disposition"), str) or not rule["disposition"]:
+            raise KnowledgeLoadError(f"{context}（{rule_id}）缺少 disposition")
+        points = rule.get("observation_points", [])
+        if not isinstance(points, list) or not all(isinstance(point, str) for point in points):
+            raise KnowledgeLoadError(f"{context}（{rule_id}）observation_points 必须是字符串列表")
+
+    return rules, data.get("version", "")
+
+
 # 模块加载时一次性载入并校验，失败直接暴露问题
 SYNDROME_RULES, _SYNDROME_RULES_VERSION = _load_syndrome_rules()
 _TERM_ENTRIES, _TERM_VERSION = _load_term_normalization()
 CHIEF_COMPLAINT_PRIORITIES, _FOLLOWUP_VERSION = _load_chief_complaint_followup()
 _RED_FLAGS, _RED_FLAGS_VERSION = _load_red_flags()
+_RISK_RULES, _RISK_RULES_VERSION = _load_risk_rules()
 
 KNOWLEDGE_VERSION = {
     "syndrome_rules": _SYNDROME_RULES_VERSION,
     "term_normalization": _TERM_VERSION,
     "chief_complaint_followup": _FOLLOWUP_VERSION,
     "red_flags": _RED_FLAGS_VERSION,
+    "risk_rules": _RISK_RULES_VERSION,
 }
 
 # 别名 -> 规范词索引，按别名长度降序，保证长别名优先替换
@@ -241,6 +287,11 @@ def normalize_term(text):
 def get_red_flags():
     """返回红旗信号表（副本），供抽取层构建匹配模式。"""
     return [dict(flag) for flag in _RED_FLAGS]
+
+
+def get_risk_rules():
+    """返回风险分层规则表（副本），供 risk_tool 声明式解释器按序执行。"""
+    return [dict(rule) for rule in _RISK_RULES]
 
 
 def get_term_entries():

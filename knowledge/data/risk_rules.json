@@ -1,0 +1,86 @@
+{
+  "version": "1.0.0",
+  "description": "风险分层规则表：按顺序解释执行，命中即返回。红旗信号短路在代码层处理。when 支持 symptoms_all/symptoms_any/union_any/severity_in/past_history_any/age_gte/require_symptoms 条件。内容为演示级，需专业审核。",
+  "rules": [
+    {
+      "id": "chest_pain_with_dyspnea",
+      "risk": "HIGH",
+      "when": {"symptoms_all": ["胸痛", "呼吸困难"]},
+      "reason": "胸痛伴呼吸困难属于高风险组合",
+      "disposition": "建议立即前往急诊",
+      "observation_points": ["避免继续等待线上回复", "尽快由线下医生评估心肺问题"]
+    },
+    {
+      "id": "chest_pain_with_cardiac_history",
+      "risk": "HIGH",
+      "when": {"symptoms_all": ["胸痛"], "past_history_any": ["冠心病", "高血压"]},
+      "reason": "胸痛合并心血管既往病史，需要优先排除急性心血管问题",
+      "disposition": "建议当天线下就医，若持续不缓解应急诊处理",
+      "observation_points": ["若胸痛持续、加重或伴出汗气短，请立即就医"]
+    },
+    {
+      "id": "severe_symptom",
+      "risk": "HIGH",
+      "when": {"severity_in": ["重度"]},
+      "reason": "症状描述为重度，需要尽快线下评估",
+      "disposition": "建议当天就医",
+      "observation_points": ["如果已经影响正常活动，不建议继续仅做居家观察"]
+    },
+    {
+      "id": "respiratory_high_risk",
+      "risk": "HIGH",
+      "when": {"symptoms_all": ["发热", "咳嗽", "呼吸困难"]},
+      "reason": "发热、咳嗽并伴呼吸困难，需要警惕较重呼吸系统问题",
+      "disposition": "建议尽快线下评估呼吸道情况",
+      "observation_points": ["关注呼吸频率、胸闷和精神状态变化"]
+    },
+    {
+      "id": "abdominal_high_risk",
+      "risk": "HIGH",
+      "when": {"symptoms_all": ["腹痛"], "union_any": ["呕吐", "便血"]},
+      "reason": "腹痛伴呕吐或消化道出血提示消化系统高风险",
+      "disposition": "建议尽快线下就医",
+      "observation_points": ["若疼痛持续加重或无法进食，应尽快就医"]
+    },
+    {
+      "id": "headache_with_vomiting",
+      "risk": "MEDIUM",
+      "when": {"symptoms_all": ["头痛"], "severity_in": ["中度", "重度"], "union_any": ["呕吐"]},
+      "reason": "头痛伴呕吐，需要继续排查神经系统风险信号",
+      "disposition": "建议尽快补充起病方式、持续时间和是否突发加重",
+      "observation_points": ["若出现意识异常、肢体无力或突然加重，应立即就医"]
+    },
+    {
+      "id": "fever_with_cough",
+      "risk": "MEDIUM",
+      "when": {"symptoms_all": ["发热", "咳嗽"]},
+      "reason": "发热伴呼吸道症状，需要结合病程和伴随症状继续判断",
+      "disposition": "建议完善体温、病程和呼吸道相关伴随症状信息",
+      "observation_points": ["若合并气促、胸痛或高热持续不退，应及时就医"]
+    },
+    {
+      "id": "abdominal_pain_with_history",
+      "risk": "MEDIUM",
+      "when": {"symptoms_all": ["腹痛"], "past_history_any": ["胃病"]},
+      "reason": "腹痛合并既往胃病史，需要继续排查消化系统问题",
+      "disposition": "建议关注疼痛位置、进食关系和呕吐排便情况",
+      "observation_points": ["若疼痛固定在右下腹或持续加重，应线下评估"]
+    },
+    {
+      "id": "cardiopulmonary_needs_followup",
+      "risk": "MEDIUM",
+      "when": {"symptoms_any": ["胸痛", "呼吸困难"]},
+      "reason": "当前症状涉及胸部或呼吸系统，仍需谨慎分诊",
+      "disposition": "建议尽快补充持续时间、严重程度和伴随症状",
+      "observation_points": ["若症状进行性加重，应尽快线下就医"]
+    },
+    {
+      "id": "older_patient",
+      "risk": "MEDIUM",
+      "when": {"age_gte": 65, "require_symptoms": true},
+      "reason": "高龄患者出现症状时建议提高警惕并尽快明确病情变化",
+      "disposition": "建议尽快补充病程、严重程度和基础病信息",
+      "observation_points": ["如有多种慢病或症状波动明显，建议线下评估"]
+    }
+  ]
+}

@@ -1252,6 +1252,47 @@ def test_llm_retry_and_degradation_transparency():
     return passed
 
 
+# 测试风险规则外置：声明式规则加载校验通过，解释器对典型规则命中正确
+def test_risk_rules_externalized():
+    from knowledge.tcm_knowledge import KNOWLEDGE_VERSION, get_risk_rules
+    from tools.risk_tool import risk_assessment
+
+    rules = get_risk_rules()
+    rules_valid = (
+        len(rules) >= 10
+        and all(rule.get("id") and rule.get("when") and rule.get("reason") for rule in rules)
+        and "risk_rules" in KNOWLEDGE_VERSION
+    )
+
+    combo = risk_assessment({"symptoms": ["胸痛", "呼吸困难"]})
+    cardiac = risk_assessment({"symptoms": ["胸痛"], "past_history": ["高血压"]})
+    headache = risk_assessment({"symptoms": ["头痛", "呕吐"], "severity": "中度"})
+    elderly = risk_assessment({"symptoms": ["乏力"], "age": "70"})
+
+    checks = [
+        ("risk rules loaded with schema validation", rules_valid),
+        ("symptom combo rule hits", combo["risk"] == "HIGH" and "chest_pain_with_dyspnea" in combo["matched_rules"]),
+        (
+            "past history condition hits",
+            cardiac["risk"] == "HIGH" and "chest_pain_with_cardiac_history" in cardiac["matched_rules"],
+        ),
+        (
+            "severity plus union condition hits",
+            headache["risk"] == "MEDIUM" and "headache_with_vomiting" in headache["matched_rules"],
+        ),
+        ("age condition hits", elderly["risk"] == "MEDIUM" and "older_patient" in elderly["matched_rules"]),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
 # 测试配置校验友好化：非数字参数抛出含字段名的明确错误
 def test_config_validation_friendly_errors():
     from config_manager import _validate_config
@@ -1330,6 +1371,7 @@ def main():
         test_atomic_json_write(),
         test_llm_retry_and_degradation_transparency(),
         test_config_validation_friendly_errors(),
+        test_risk_rules_externalized(),
     ]
     passed = sum(results)
     total = len(results)
