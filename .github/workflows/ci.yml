@@ -1,0 +1,33 @@
+# 双基线 CI：mock provider 下无需任何 API key
+# 1) test_system.py 全量系统测试  2) evaluation/run_eval.py 评测回放
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      LLM_PROVIDER: mock
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run system tests
+        run: python test_system.py
+
+      - name: Run evaluation suite
+        run: python evaluation/run_eval.py
