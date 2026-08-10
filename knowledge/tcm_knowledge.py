@@ -245,6 +245,53 @@ def _load_risk_rules():
     return rules, data.get("version", "")
 
 
+def _load_corpus(filename, list_key, required_fields=None):
+    """通用语料加载器：校验 id 唯一、title/content/tags 非空，syndromes 挂钩必须命中现有证型名。
+
+    required_fields 可指定额外必填字段及其类型（"str" 或 "list"），如方剂的组成与功效。
+    每条语料附带 source_file 供检索结果溯源。
+    """
+    data = _load_json(filename)
+    entries = data.get(list_key)
+    if not isinstance(entries, list) or not entries:
+        raise KnowledgeLoadError(f"{filename} 缺少 {list_key} 列表")
+
+    valid_syndromes = {rule["name"] for rule in SYNDROME_RULES}
+    seen_ids = set()
+    for index, entry in enumerate(entries):
+        context = f"{filename} {list_key}[{index}]"
+        entry_id = entry.get("id")
+        if not entry_id or not isinstance(entry_id, str):
+            raise KnowledgeLoadError(f"{context} 缺少 id")
+        if entry_id in seen_ids:
+            raise KnowledgeLoadError(f"{context} id {entry_id} 重复")
+        seen_ids.add(entry_id)
+        if not isinstance(entry.get("title"), str) or not entry["title"]:
+            raise KnowledgeLoadError(f"{context}（{entry_id}）缺少 title")
+        if not isinstance(entry.get("content"), str) or not entry["content"]:
+            raise KnowledgeLoadError(f"{context}（{entry_id}）缺少 content")
+        tags = entry.get("tags")
+        if not isinstance(tags, list) or not tags or not all(isinstance(t, str) and t for t in tags):
+            raise KnowledgeLoadError(f"{context}（{entry_id}）tags 必须是非空字符串列表")
+        syndromes = entry.get("syndromes", [])
+        if not isinstance(syndromes, list) or not all(isinstance(s, str) for s in syndromes):
+            raise KnowledgeLoadError(f"{context}（{entry_id}）syndromes 必须是字符串列表")
+        unknown = set(syndromes) - valid_syndromes
+        if unknown:
+            raise KnowledgeLoadError(f"{context}（{entry_id}）挂钩证型 {sorted(unknown)} 不在 syndrome_rules 中")
+        for field, field_type in (required_fields or {}).items():
+            value = entry.get(field)
+            if field_type == "str" and (not isinstance(value, str) or not value):
+                raise KnowledgeLoadError(f"{context}（{entry_id}）缺少 {field}")
+            if field_type == "list" and (
+                not isinstance(value, list) or not value or not all(isinstance(item, str) for item in value)
+            ):
+                raise KnowledgeLoadError(f"{context}（{entry_id}）{field} 必须是非空字符串列表")
+        entry["source_file"] = f"knowledge/data/{filename}"
+
+    return entries, data.get("version", "")
+
+
 # 模块加载时一次性载入并校验，失败直接暴露问题
 SYNDROME_RULES, _SYNDROME_RULES_VERSION = _load_syndrome_rules()
 _TERM_ENTRIES, _TERM_VERSION = _load_term_normalization()
@@ -252,12 +299,28 @@ CHIEF_COMPLAINT_PRIORITIES, _FOLLOWUP_VERSION = _load_chief_complaint_followup()
 _RED_FLAGS, _RED_FLAGS_VERSION = _load_red_flags()
 _RISK_RULES, _RISK_RULES_VERSION = _load_risk_rules()
 
+# RAG 前置语料：方剂/调护/FAQ，content 为自包含文本段，后续可直接作为检索单元
+_FORMULAS, _FORMULAS_VERSION = _load_corpus(
+    "formulas.json", "formulas", required_fields={"composition": "list", "efficacy": "str"}
+)
+_HEALTH_ADVICE, _HEALTH_ADVICE_VERSION = _load_corpus("health_advice.json", "advice")
+_FAQS, _FAQS_VERSION = _load_corpus("faq.json", "faqs")
+_CORPUS_ENTRIES = _FORMULAS + _HEALTH_ADVICE + _FAQS
+
+# 语料 id 要求全局唯一，保证检索溯源与后续向量化 chunk 标识稳定
+_CORPUS_IDS = [entry["id"] for entry in _CORPUS_ENTRIES]
+if len(set(_CORPUS_IDS)) != len(_CORPUS_IDS):
+    raise KnowledgeLoadError("语料 id 存在跨文件重复")
+
 KNOWLEDGE_VERSION = {
     "syndrome_rules": _SYNDROME_RULES_VERSION,
     "term_normalization": _TERM_VERSION,
     "chief_complaint_followup": _FOLLOWUP_VERSION,
     "red_flags": _RED_FLAGS_VERSION,
     "risk_rules": _RISK_RULES_VERSION,
+    "formulas": _FORMULAS_VERSION,
+    "health_advice": _HEALTH_ADVICE_VERSION,
+    "faq": _FAQS_VERSION,
 }
 
 # 别名 -> 规范词索引，按别名长度降序，保证长别名优先替换
@@ -297,6 +360,16 @@ def get_risk_rules():
 def get_term_entries():
     """返回术语归一化条目（副本），供知识检索工具使用。"""
     return [dict(entry) for entry in _TERM_ENTRIES]
+
+
+def get_corpus():
+    """返回全部语料条目（副本），供检索器与知识检索工具使用。"""
+    return [dict(entry) for entry in _CORPUS_ENTRIES]
+
+
+def get_corpus_by_category(category):
+    """按类别返回语料条目（副本），未命中返回空列表。"""
+    return [dict(entry) for entry in _CORPUS_ENTRIES if entry.get("category") == category]
 
 
 def get_syndrome_rule(name):
