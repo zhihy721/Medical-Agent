@@ -9,6 +9,7 @@
         "next_action": "risk_escalation",
         "is_final": true,
         "red_flags_contain": ["意识障碍"],
+        "red_flags_set": ["意识障碍"],
         "response_contain": ["就医"]
       }
     }

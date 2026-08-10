@@ -8,6 +8,7 @@
         "risk": "MEDIUM",
         "is_final": false,
         "symptoms_contain": ["发热", "咳嗽"],
+        "red_flags_set": [],
         "next_action_any": ["ask_followup_single", "ask_followup_bundle", "summarize_progress"]
       }
     }

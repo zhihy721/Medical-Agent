@@ -8,7 +8,8 @@
         "risk": "MEDIUM",
         "is_final": false,
         "symptoms_contain": ["乏力"],
-        "slots_filled": ["age", "duration"]
+        "slots_filled": ["age", "duration"],
+        "red_flags_set": []
       }
     }
   ]

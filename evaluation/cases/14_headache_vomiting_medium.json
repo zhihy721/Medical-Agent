@@ -1,0 +1,16 @@
+{
+  "id": "14_headache_vomiting_medium",
+  "description": "头痛伴呕吐且程度中度，应命中 headache_with_vomiting 规则评为中风险并继续收集信息",
+  "turns": [
+    {
+      "user": "我头痛，还吐了一次，程度比较明显",
+      "expect": {
+        "risk": "MEDIUM",
+        "is_final": false,
+        "symptoms_contain": ["头痛", "呕吐"],
+        "red_flags_set": [],
+        "next_action_any": ["ask_followup_single", "ask_followup_bundle", "summarize_progress"]
+      }
+    }
+  ]
+}

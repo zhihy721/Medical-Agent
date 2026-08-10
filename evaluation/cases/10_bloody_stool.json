@@ -9,6 +9,7 @@
         "next_action": "risk_escalation",
         "is_final": true,
         "red_flags_contain": ["便血"],
+        "red_flags_set": ["便血"],
         "response_contain": ["就医"]
       }
     }

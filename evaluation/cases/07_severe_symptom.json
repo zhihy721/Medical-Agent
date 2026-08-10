@@ -9,6 +9,7 @@
         "next_action": "risk_escalation",
         "is_final": true,
         "symptoms_contain": ["头痛"],
+        "red_flags_set": [],
         "response_contain": ["就医"]
       }
     }

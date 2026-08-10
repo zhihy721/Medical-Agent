@@ -8,7 +8,8 @@
       "expect": {
         "slots_filled": ["pulse_summary"],
         "syndromes_contain": ["风寒束表"],
-        "symptoms_contain": ["咳嗽"]
+        "symptoms_contain": ["咳嗽"],
+        "red_flags_set": []
       }
     }
   ]

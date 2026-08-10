@@ -37,6 +37,7 @@ import io
 import json
 import os
 import sys
+import time
 
 # 保证从任意目录运行时都能导入项目模块
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -99,8 +100,9 @@ def run_case(case):
 
 
 def check_turn(expect, record):
-    """按断言逐项检查一轮结果，返回失败原因列表（空列表表示通过）。"""
+    """按断言逐项检查一轮结果，返回 (失败原因列表, 红旗 tp, fp, fn)。"""
     failures = []
+    flag_tp = flag_fp = flag_fn = 0
     plan = record["plan"]
     risk_result = record["risk_result"]
     action_result = record["action_result"]
@@ -126,6 +128,16 @@ def check_turn(expect, record):
         if flag not in case_state.get("red_flags", []):
             failures.append(f"red_flags 未包含 {flag}，实际 {case_state.get('red_flags', [])}")
 
+    # 红旗精确集合标注：既算断言，也累计 precision/recall 的 TP/FP/FN
+    if "red_flags_set" in expect:
+        expected_flags = set(expect["red_flags_set"])
+        actual_flags = set(case_state.get("red_flags", []))
+        flag_tp = len(expected_flags & actual_flags)
+        flag_fp = len(actual_flags - expected_flags)
+        flag_fn = len(expected_flags - actual_flags)
+        if actual_flags != expected_flags:
+            failures.append(f"red_flags 集合期望 {sorted(expected_flags)}，实际 {sorted(actual_flags)}")
+
     candidate_names = [item.get("name") for item in plan.get("syndrome_candidates", [])]
     for name in expect.get("syndromes_contain", []):
         if name not in candidate_names:
@@ -142,7 +154,7 @@ def check_turn(expect, record):
         if fragment not in record["response"]:
             failures.append(f"response 未包含 {fragment!r}")
 
-    return failures
+    return failures, flag_tp, flag_fp, flag_fn
 
 
 def evaluate_case(case, verbose=False):
@@ -151,13 +163,20 @@ def evaluate_case(case, verbose=False):
     turns = case.get("turns", [])
     turn_results = []
     all_failures = []
+    red_flag_tp = red_flag_fp = red_flag_fn = 0
 
     for index, turn in enumerate(turns):
         expect = turn.get("expect") or {}
         if index >= len(records):
             turn_results.append({"pass": False, "failures": [f"缺少第 {index + 1} 轮运行记录"]})
             continue
-        failures = check_turn(expect, records[index]) if expect else []
+        if expect:
+            failures, flag_tp, flag_fp, flag_fn = check_turn(expect, records[index])
+        else:
+            failures, flag_tp, flag_fp, flag_fn = [], 0, 0, 0
+        red_flag_tp += flag_tp
+        red_flag_fp += flag_fp
+        red_flag_fn += flag_fn
         turn_results.append({"pass": not failures, "failures": failures})
         all_failures.extend(f"[轮 {index + 1}] {message}" for message in failures)
 
@@ -196,11 +215,14 @@ def evaluate_case(case, verbose=False):
         "turn_count": len(turns),
         "convergence_turn": convergence_turn,
         "replanned_turns": replanned_turns,
+        "red_flag_tp": red_flag_tp,
+        "red_flag_fp": red_flag_fp,
+        "red_flag_fn": red_flag_fn,
     }
 
 
-def print_report(results, verbose=False):
-    """打印评测报告：明细 + 汇总指标。"""
+def aggregate_metrics(results):
+    """从用例结果汇总全局指标，供控制台报告与 report.json 共用。"""
     passed = sum(1 for item in results if item["pass"])
     total = len(results)
     risk_expected = sum(item["risk_expected"] for item in results)
@@ -209,8 +231,57 @@ def print_report(results, verbose=False):
     total_replans = sum(item["replanned_turns"] for item in results)
     total_turns = sum(item["turn_count"] for item in results)
 
+    flag_tp = sum(item["red_flag_tp"] for item in results)
+    flag_fp = sum(item["red_flag_fp"] for item in results)
+    flag_fn = sum(item["red_flag_fn"] for item in results)
+    flag_precision = round(flag_tp / (flag_tp + flag_fp), 3) if flag_tp + flag_fp else None
+    flag_recall = round(flag_tp / (flag_tp + flag_fn), 3) if flag_tp + flag_fn else None
+
+    return {
+        "cases_passed": passed,
+        "cases_total": total,
+        "risk_expected": risk_expected,
+        "risk_correct": risk_correct,
+        "risk_accuracy": round(risk_correct / risk_expected, 3) if risk_expected else None,
+        "red_flag_tp": flag_tp,
+        "red_flag_fp": flag_fp,
+        "red_flag_fn": flag_fn,
+        "red_flag_precision": flag_precision,
+        "red_flag_recall": flag_recall,
+        "converged_cases": len(converged),
+        "avg_convergence_turns": round(sum(item["convergence_turn"] for item in converged) / len(converged), 2)
+        if converged
+        else None,
+        "replanned_turns": total_replans,
+        "total_turns": total_turns,
+        "replan_rate": round(total_replans / total_turns, 3) if total_turns else None,
+    }
+
+
+def build_report(results):
+    """构造可落盘的评测报告：时间戳 + 全局指标 + 逐用例结果。"""
+    return {
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        "metrics": aggregate_metrics(results),
+        "cases": [
+            {
+                "id": item["id"],
+                "pass": item["pass"],
+                "failures": item["failures"],
+                "convergence_turn": item["convergence_turn"],
+                "replanned_turns": item["replanned_turns"],
+            }
+            for item in results
+        ],
+    }
+
+
+def print_report(results, verbose=False):
+    """打印评测报告：明细 + 汇总指标。"""
+    metrics = aggregate_metrics(results)
+
     print("=" * 60)
-    print(f"评测结果：{passed}/{total} 用例通过")
+    print(f"评测结果：{metrics['cases_passed']}/{metrics['cases_total']} 用例通过")
     print("=" * 60)
 
     for item in results:
@@ -225,13 +296,23 @@ def print_report(results, verbose=False):
                 print(f"    轮 {index + 1}: {'通过' if turn['pass'] else '失败'}")
 
     print("-" * 60)
-    if risk_expected:
-        print(f"风险识别准确率: {risk_correct}/{risk_expected} ({round(risk_correct / risk_expected * 100, 1)}%)")
-    if converged:
-        average = round(sum(item["convergence_turn"] for item in converged) / len(converged), 2)
-        print(f"收敛用例数: {len(converged)}，平均收敛轮数: {average}")
-    if total_turns:
-        print(f"replan 轮数占比: {total_replans}/{total_turns} ({round(total_replans / total_turns * 100, 1)}%)")
+    if metrics["risk_expected"]:
+        print(
+            f"风险识别准确率: {metrics['risk_correct']}/{metrics['risk_expected']} "
+            f"({round(metrics['risk_correct'] / metrics['risk_expected'] * 100, 1)}%)"
+        )
+    if metrics["red_flag_tp"] + metrics["red_flag_fp"] + metrics["red_flag_fn"]:
+        print(
+            f"红旗识别 precision: {metrics['red_flag_precision']}，recall: {metrics['red_flag_recall']} "
+            f"(TP={metrics['red_flag_tp']} FP={metrics['red_flag_fp']} FN={metrics['red_flag_fn']})"
+        )
+    if metrics["converged_cases"]:
+        print(f"收敛用例数: {metrics['converged_cases']}，平均收敛轮数: {metrics['avg_convergence_turns']}")
+    if metrics["total_turns"]:
+        print(
+            f"replan 轮数占比: {metrics['replanned_turns']}/{metrics['total_turns']} "
+            f"({round(metrics['replanned_turns'] / metrics['total_turns'] * 100, 1)}%)"
+        )
     print("-" * 60)
 
 
@@ -246,6 +327,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Medical-Agent 系统化评测集")
     parser.add_argument("--case", help="只运行指定 id 的用例")
     parser.add_argument("--verbose", action="store_true", help="打印每轮详细结果")
+    parser.add_argument("--report", metavar="PATH", help="将评测报告 JSON 落盘到指定路径")
     args = parser.parse_args(argv)
 
     cases = load_cases(args.case)
@@ -255,6 +337,12 @@ def main(argv=None):
 
     results = [evaluate_case(case, verbose=args.verbose) for case in cases]
     print_report(results, verbose=args.verbose)
+
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as handle:
+            json.dump(build_report(results), handle, ensure_ascii=False, indent=2)
+        print(f"评测报告已写入 {args.report}")
+
     return 0 if all(item["pass"] for item in results) else 1
 
 

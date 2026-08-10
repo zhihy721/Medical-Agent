@@ -1,0 +1,17 @@
+{
+  "id": "15_chest_pain_cardiac_history",
+  "description": "胸痛合并高血压既往史，应命中 chest_pain_with_cardiac_history 规则高风险升级",
+  "turns": [
+    {
+      "user": "我胸痛，以前有高血压",
+      "expect": {
+        "risk": "HIGH",
+        "next_action": "risk_escalation",
+        "is_final": true,
+        "symptoms_contain": ["胸痛"],
+        "red_flags_set": [],
+        "response_contain": ["就医"]
+      }
+    }
+  ]
+}
