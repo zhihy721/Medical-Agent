@@ -236,6 +236,8 @@ def build_risk_escalation_action_result(case_state, risk_result, guideline_resul
     # 外部知识库增强，提供一些常见的高风险症状组合和处理建议，帮助用户理解风险的具体表现和应对措施
     for advice in guideline_result.get("advice", []):
         lines.append(f"- {advice}")
+    # MCP 可选增强：附加附近医院清单；未配置位置、工具不可用或调用失败均静默跳过
+    lines.extend(_nearby_hospital_lines())
 
     return ActionResult(
         name="risk_escalation",
@@ -245,6 +247,31 @@ def build_risk_escalation_action_result(case_state, risk_result, guideline_resul
         missing_slots=[],
         render_mode="final",
     )
+
+# 高风险升级回复的附近医院建议：仅当 hospital_locator MCP 工具已注册且配置了位置时附加
+def _nearby_hospital_lines():
+    import os
+
+    from tools.registry import default_registry
+
+    location = os.getenv("MEDICAL_AGENT_LOCATION", "").strip()
+    if not location:
+        return []
+    tool = default_registry.get("hospital_locator_search_nearby_hospitals")
+    if tool is None:
+        return []
+    result = tool(location=location)
+    if result.get("status") != "ok":
+        return []
+    hospitals = (result.get("data") or {}).get("hospitals") or []
+    if not hospitals:
+        return []
+    lines = [f"如你就近位于{location}，以下医院可前往（演示数据，以实际导航为准）："]
+    for item in hospitals[:3]:
+        emergency = "，有急诊" if item.get("has_emergency") else ""
+        lines.append(f"- {item.get('name', '')}（{item.get('district', '')}，约 {item.get('distance_km', '?')} 公里{emergency}）")
+    return lines
+
 
 # 正常结束路径的结果构建
 def build_final_advice_action_result(case_state, risk_result, guideline_result, plan):
