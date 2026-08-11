@@ -8,8 +8,9 @@
       "command": "python",
       "args": ["mcp_servers/hospital_locator.py"],
       "env": {},
+      "call_timeout": 5,
       "enabled": true,
-      "description": "仓库内 mock 地图服务：附近医院查询（纯演示数据，无外部 API）"
+      "description": "仓库内 mock 地图服务：附近医院查询（纯演示数据，无外部 API）；call_timeout 限制其在高风险回复路径上的最坏延迟"
     },
     {
       "name": "pulse_device",

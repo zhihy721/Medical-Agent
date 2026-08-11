@@ -38,14 +38,20 @@ def search_nearby_hospitals(location: str, department: str = "") -> str:
         if key in city or city in key:
             matched = items
             break
+    note = "演示数据，非真实地图信息，就医请以实际导航与医院公告为准"
     if department:
         filtered = [item for item in matched if department in item["departments"]]
-        matched = filtered or matched
+        if matched and not filtered:
+            # 指定科室无匹配时返回空列表并说明，不静默回退全部（避免误导）
+            matched = []
+            note = f"{city or '该位置'}暂未收录带{department}的医院（演示数据）"
+        else:
+            matched = filtered
     payload = {
         "location": city,
         "count": len(matched),
         "hospitals": matched,
-        "note": "演示数据，非真实地图信息，就医请以实际导航与医院公告为准",
+        "note": note,
     }
     return json.dumps(payload, ensure_ascii=False)
 
