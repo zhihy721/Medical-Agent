@@ -23,6 +23,23 @@ def build_mcp_tool(manager, server_name, tool_info):
     return managed_tool(local_name, MCP_TOOL_VERSION, description)(_invoke)
 
 
+def register_server_tools(manager, registry, server_name, tool_infos):
+    """把单个服务的远端工具批量注册进 registry，返回实际注册数。
+
+    命名冲突防护：registry 中已存在同名工具时跳过并告警，绝不覆盖（防止远端工具
+    无声顶掉本地核心工具，如 risk_assessment）。
+    """
+    registered = 0
+    for info in tool_infos:
+        local_name = f"{server_name}_{info['name']}"
+        if registry.get(local_name) is not None:
+            _logger.warning("MCP 工具 %s 与已注册工具同名，跳过注册（不覆盖）", local_name)
+            continue
+        registry.register(build_mcp_tool(manager, server_name, info))
+        registered += 1
+    return registered
+
+
 def connect_mcp_servers(registry=None, config_path=None):
     """读取配置、连接 enabled 的 MCP 服务并把远端工具注册进 registry。
 
@@ -53,9 +70,7 @@ def connect_mcp_servers(registry=None, config_path=None):
         except MCPClientError as exc:
             _logger.warning("MCP 服务 %s 枚举工具失败: %s", name, exc)
             continue
-        for info in tools:
-            registry.register(build_mcp_tool(default_manager, name, info))
-            registered += 1
+        registered += register_server_tools(default_manager, registry, name, tools)
 
     _logger.info("MCP 接入完成，注册 %d 个远端工具", registered)
     return default_manager

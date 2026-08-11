@@ -1102,9 +1102,10 @@ def test_mcp_config_and_adapter_degradation():
     import tempfile
     from pathlib import Path
 
-    from mcp_bridge.adapter import build_mcp_tool
-    from mcp_bridge.client import MCPClientError, MCPClientManager
+    from mcp_bridge.adapter import build_mcp_tool, register_server_tools
+    from mcp_bridge.client import MCPClientError, MCPClientManager, build_server_env
     from mcp_bridge.config import MCPConfigError, load_mcp_config
+    from tools.registry import ToolRegistry
 
     with tempfile.TemporaryDirectory() as tmp:
         valid_path = Path(tmp) / "valid.json"
@@ -1113,7 +1114,7 @@ def test_mcp_config_and_adapter_degradation():
                 {
                     "version": "1.0.0",
                     "servers": [
-                        {"name": "demo", "transport": "stdio", "command": "python", "args": [], "env": {}, "enabled": True}
+                        {"name": "demo", "transport": "stdio", "command": "python", "args": [], "env": {}, "enabled": True, "call_timeout": 5}
                     ],
                 }
             ),
@@ -1121,6 +1122,7 @@ def test_mcp_config_and_adapter_degradation():
         )
         valid = load_mcp_config(valid_path)
         command_normalized = valid[0]["command"] == sys.executable
+        timeout_parsed = valid[0].get("call_timeout") == 5.0
 
         bad_transport = Path(tmp) / "bad_transport.json"
         bad_transport.write_text(
@@ -1132,7 +1134,17 @@ def test_mcp_config_and_adapter_degradation():
             json.dumps({"version": "1.0.0", "servers": [{"name": "x", "transport": "stdio", "enabled": "yes", "command": "python"}]}),
             encoding="utf-8",
         )
-        transport_error = enabled_error = False
+        reserved_transport = Path(tmp) / "reserved_transport.json"
+        reserved_transport.write_text(
+            json.dumps({"version": "1.0.0", "servers": [{"name": "x", "transport": "streamable_http", "enabled": True}]}),
+            encoding="utf-8",
+        )
+        bad_timeout = Path(tmp) / "bad_timeout.json"
+        bad_timeout.write_text(
+            json.dumps({"version": "1.0.0", "servers": [{"name": "x", "transport": "stdio", "enabled": True, "command": "python", "call_timeout": -1}]}),
+            encoding="utf-8",
+        )
+        transport_error = enabled_error = reserved_message = timeout_error = False
         try:
             load_mcp_config(bad_transport)
         except MCPConfigError:
@@ -1141,13 +1153,39 @@ def test_mcp_config_and_adapter_degradation():
             load_mcp_config(bad_enabled)
         except MCPConfigError:
             enabled_error = True
+        try:
+            load_mcp_config(reserved_transport)
+        except MCPConfigError as exc:
+            reserved_message = "预留" in str(exc)
+        try:
+            load_mcp_config(bad_timeout)
+        except MCPConfigError:
+            timeout_error = True
 
-    # 项目自带配置可加载：hospital_locator 启用、pulse_device 占位禁用
+    # 项目自带配置可加载：hospital_locator 启用（含服务级超时）、pulse_device 占位禁用
     project_servers = {entry["name"]: entry for entry in load_mcp_config()}
     project_config_ok = (
         project_servers.get("hospital_locator", {}).get("enabled") is True
+        and project_servers.get("hospital_locator", {}).get("call_timeout") == 5.0
         and project_servers.get("pulse_device", {}).get("enabled") is False
     )
+
+    # 子进程环境最小化：不透传宿主全量环境，强制 UTF-8，配置 env 可覆盖默认
+    import os
+
+    os.environ["MEDICAL_FAKE_SECRET"] = "should-not-leak"
+    try:
+        minimal = build_server_env({})
+        env_minimized = (
+            "MEDICAL_FAKE_SECRET" not in minimal
+            and "PATH" in minimal
+            and minimal.get("PYTHONUTF8") == "1"
+            and minimal.get("PYTHONIOENCODING") == "utf-8"
+        )
+        overridden = build_server_env({"PYTHONIOENCODING": "gbk", "CUSTOM_VAR": "v"})
+        env_override_ok = overridden["PYTHONIOENCODING"] == "gbk" and overridden["CUSTOM_VAR"] == "v"
+    finally:
+        os.environ.pop("MEDICAL_FAKE_SECRET", None)
 
     # 未启动的管理器：适配工具返回标准 error ToolResult 而非抛异常
     manager = MCPClientManager()
@@ -1160,13 +1198,39 @@ def test_mcp_config_and_adapter_degradation():
     except MCPClientError:
         manager_error_ok = True
 
+    # 命名冲突防护：同名工具跳过不覆盖，不冲突的正常注册
+    fresh_registry = ToolRegistry()
+
+    def _original():
+        return "original"
+
+    _original.tool_name = "demo_server_demo_tool"
+    _original.tool_version = "0"
+    _original.tool_description = "原有工具"
+    fresh_registry.register(_original)
+    registered_count = register_server_tools(
+        object(), fresh_registry, "demo_server",
+        [{"name": "demo_tool"}, {"name": "other_tool"}],
+    )
+    collision_guard_ok = (
+        registered_count == 1
+        and fresh_registry.get("demo_server_demo_tool")() == "original"
+        and fresh_registry.get("demo_server_other_tool") is not None
+    )
+
     checks = [
         ("valid mcp config parsed with interpreter normalization", command_normalized),
+        ("call_timeout parsed as positive float", timeout_parsed),
         ("invalid transport rejected", transport_error),
         ("non-bool enabled rejected", enabled_error),
+        ("reserved streamable_http rejected with dedicated message", reserved_message),
+        ("non-positive call_timeout rejected", timeout_error),
         ("project mcp config loads with expected flags", project_config_ok),
+        ("server env minimized with utf-8 defaults", env_minimized),
+        ("config env overrides defaults", env_override_ok),
         ("adapter degrades to error result when disconnected", bool(degraded_ok)),
         ("manager raises MCPClientError when not started", manager_error_ok),
+        ("name collision skipped without overwriting", collision_guard_ok),
     ]
 
     passed = True
@@ -1202,6 +1266,10 @@ def test_mcp_end_to_end_hospital_locator():
         unknown = tool(location="不存在的城市") if tool else {"data": {}}
         unknown_ok = unknown.get("status") == "ok" and unknown["data"].get("count", 0) == 0
 
+        # 科室过滤无匹配时返回空列表（不静默回退全部）
+        no_dept = tool(location="北京", department="儿科") if tool else {"data": {}}
+        dept_mismatch_ok = no_dept.get("status") == "ok" and no_dept["data"].get("count", 0) == 0
+
         # HIGH 升级回复：配置位置后附加医院清单；未配置时不附加（保持既有回复形态）
         bare = build_risk_escalation_action_result(
             {"symptoms": ["胸痛"]},
@@ -1229,6 +1297,7 @@ def test_mcp_end_to_end_hospital_locator():
         ("mock mcp server connected via stdio", connected),
         ("search_nearby_hospitals returns structured hospitals", data_ok),
         ("unknown location returns empty list without error", unknown_ok),
+        ("unmatched department returns empty instead of silent fallback", dept_mismatch_ok),
         ("high-risk escalation appends hospitals only when configured", hospital_lines_ok),
     ]
 

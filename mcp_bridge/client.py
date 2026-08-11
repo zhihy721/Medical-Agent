@@ -2,6 +2,7 @@
 # 连接/调用均有超时保护；单服务失败只跳过不阻断，shutdown 负责关子进程停循环。
 import asyncio
 import os
+import sys
 import threading
 
 from mcp import ClientSession, StdioServerParameters
@@ -13,6 +14,27 @@ _logger = get_logger("mcp_bridge.client")
 
 CONNECT_TIMEOUT = 10.0
 CALL_TIMEOUT = 15.0
+
+# 子进程环境白名单：不透传宿主全量环境（避免 API key 等敏感变量泄漏给远端服务），
+# 仅保留启动 Python 子进程的平台必需键；配置里的 env 在此之上叠加（配置优先）
+_ENV_PASSTHROUGH = ["PATH"]
+if sys.platform == "win32":
+    _ENV_PASSTHROUGH += ["SystemRoot", "SystemDrive", "TEMP", "TMP", "USERPROFILE", "PATHEXT"]
+else:
+    _ENV_PASSTHROUGH += ["HOME", "LANG", "LC_ALL"]
+
+
+def build_server_env(extra_env=None):
+    """构造 MCP 子进程的最小化环境：白名单透传 + 强制 UTF-8，再叠加配置 env。
+
+    强制 PYTHONUTF8/PYTHONIOENCODING 保证中文内容经 stdio 传输不乱码；
+    配置 env 可覆盖默认值（如服务自身需要特定编码或变量）。
+    """
+    env = {key: os.environ[key] for key in _ENV_PASSTHROUGH if key in os.environ}
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env.update(extra_env or {})
+    return env
 
 
 class MCPClientError(RuntimeError):
@@ -27,6 +49,7 @@ class MCPClientManager:
         self._thread = None
         self._shutdown_event = None
         self._servers = {}
+        self._call_timeouts = {}
         self._connect_timeout = connect_timeout
         self._call_timeout = call_timeout
         self._started = False
@@ -51,6 +74,10 @@ class MCPClientManager:
             self._thread = threading.Thread(target=self._loop.run_forever, name="mcp-client-loop", daemon=True)
             self._thread.start()
             self._shutdown_event = self._run_sync(self._make_shutdown_event(), timeout=5)
+            # 服务级调用超时：未配置的服务回退全局 CALL_TIMEOUT
+            self._call_timeouts = {
+                config["name"]: config["call_timeout"] for config in server_configs if config.get("call_timeout")
+            }
             self._started = True
 
         for config in server_configs:
@@ -81,6 +108,7 @@ class MCPClientManager:
             self._thread = None
             self._shutdown_event = None
             self._servers = {}
+            self._call_timeouts = {}
             self._started = False
 
     async def _make_shutdown_event(self):
@@ -104,10 +132,11 @@ class MCPClientManager:
         holder = {"session": None, "error": ""}
         task = self._run_sync(self._spawn_server(config, ready, holder), timeout=5)
         if not ready.wait(self._connect_timeout):
-            task.cancel()
+            # Task.cancel 非线程安全，必须经事件循环线程调度
+            self._loop.call_soon_threadsafe(task.cancel)
             raise MCPClientError(f"连接超时（{self._connect_timeout:.0f}s）")
         if holder["session"] is None:
-            task.cancel()
+            self._loop.call_soon_threadsafe(task.cancel)
             raise MCPClientError(holder["error"] or "连接失败")
         self._servers[config["name"]] = {"session": holder["session"], "task": task}
 
@@ -118,7 +147,7 @@ class MCPClientManager:
         params = StdioServerParameters(
             command=config["command"],
             args=list(config.get("args", [])),
-            env={**os.environ, **config.get("env", {})},
+            env=build_server_env(config.get("env")),
         )
         try:
             async with stdio_client(params) as (read, write):
@@ -151,12 +180,16 @@ class MCPClientManager:
             for tool in result.tools
         ]
 
-    def call_tool(self, server, tool, arguments=None):
-        """调用远端工具：返回解析后的数据（JSON 文本自动解析），isError 时抛 MCPClientError。"""
+    def call_tool(self, server, tool, arguments=None, timeout=None):
+        """调用远端工具：返回解析后的数据（JSON 文本自动解析），isError 时抛 MCPClientError。
+
+        超时优先级：显式 timeout > 服务级 call_timeout 配置 > 全局默认。
+        """
         session = self._session_for(server)
+        effective = timeout or self._call_timeouts.get(server) or self._call_timeout
         result = self._run_sync(
-            asyncio.wait_for(session.call_tool(tool, arguments or {}), self._call_timeout),
-            timeout=self._call_timeout + 5,
+            asyncio.wait_for(session.call_tool(tool, arguments or {}), effective),
+            timeout=effective + 5,
         )
         if getattr(result, "isError", False):
             raise MCPClientError(f"MCP 工具 {server}/{tool} 返回错误: {self._extract_text(result)}")
