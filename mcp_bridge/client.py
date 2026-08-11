@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import threading
+import time
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -14,6 +15,8 @@ _logger = get_logger("mcp_bridge.client")
 
 CONNECT_TIMEOUT = 10.0
 CALL_TIMEOUT = 15.0
+# 会话失效后的重连冷却：同一服务两次重连的最小间隔，防止故障服务引发重连风暴
+RECONNECT_COOLDOWN = 5.0
 
 # 子进程环境白名单：不透传宿主全量环境（避免 API key 等敏感变量泄漏给远端服务），
 # 仅保留启动 Python 子进程的平台必需键；配置里的 env 在此之上叠加（配置优先）
@@ -49,6 +52,9 @@ class MCPClientManager:
         self._thread = None
         self._shutdown_event = None
         self._servers = {}
+        self._configs = {}
+        self._stats = {}
+        self._last_reconnect_at = {}
         self._call_timeouts = {}
         self._connect_timeout = connect_timeout
         self._call_timeout = call_timeout
@@ -78,6 +84,8 @@ class MCPClientManager:
             self._call_timeouts = {
                 config["name"]: config["call_timeout"] for config in server_configs if config.get("call_timeout")
             }
+            # 保存配置副本：会话失效时据此自动重连
+            self._configs = {config["name"]: config for config in server_configs}
             self._started = True
 
         for config in server_configs:
@@ -108,6 +116,9 @@ class MCPClientManager:
             self._thread = None
             self._shutdown_event = None
             self._servers = {}
+            self._configs = {}
+            self._stats = {}
+            self._last_reconnect_at = {}
             self._call_timeouts = {}
             self._started = False
 
@@ -138,7 +149,9 @@ class MCPClientManager:
         if holder["session"] is None:
             self._loop.call_soon_threadsafe(task.cancel)
             raise MCPClientError(holder["error"] or "连接失败")
-        self._servers[config["name"]] = {"session": holder["session"], "task": task}
+        self._servers[config["name"]] = {"session": holder["session"], "task": task, "config": config}
+        # 指标条目：setdefault 保证重连不丢历史计数
+        self._stats.setdefault(config["name"], {"calls": 0, "errors": 0, "reconnects": 0, "last_error": ""})
 
     async def _spawn_server(self, config, ready, holder):
         return asyncio.ensure_future(self._serve(config, ready, holder))
@@ -166,11 +179,25 @@ class MCPClientManager:
     # ---------- 同步调用接口 ----------
 
     def list_tools(self, server):
-        """列出服务暴露的工具：[{name, description, input_schema}]。"""
+        """列出服务暴露的工具：[{name, description, input_schema}]；会话失效时先重连再试一次。"""
+        try:
+            return self._list_once(server)
+        except MCPClientError:
+            if self._maybe_reconnect(server):
+                return self._list_once(server)
+            raise
+
+    def _list_once(self, server):
         session = self._session_for(server)
-        result = self._run_sync(
-            asyncio.wait_for(session.list_tools(), self._call_timeout), timeout=self._call_timeout + 5
-        )
+        try:
+            result = self._run_sync(
+                asyncio.wait_for(session.list_tools(), self._call_timeout), timeout=self._call_timeout + 5
+            )
+        except MCPClientError:
+            raise
+        except Exception as exc:
+            # 会话对象已失效（如底层连接已断）时的非预期异常，归一化后由上层触发重连
+            raise MCPClientError(str(exc)) from exc
         return [
             {
                 "name": tool.name,
@@ -183,17 +210,77 @@ class MCPClientManager:
     def call_tool(self, server, tool, arguments=None, timeout=None):
         """调用远端工具：返回解析后的数据（JSON 文本自动解析），isError 时抛 MCPClientError。
 
-        超时优先级：显式 timeout > 服务级 call_timeout 配置 > 全局默认。
+        超时优先级：显式 timeout > 服务级 call_timeout 配置 > 全局默认；
+        会话失效（如子进程崩溃）时自动重连并重试一次，仍失败才抛出。
         """
+        try:
+            return self._call_once(server, tool, arguments, timeout)
+        except MCPClientError:
+            if self._maybe_reconnect(server):
+                return self._call_once(server, tool, arguments, timeout)
+            raise
+
+    def _call_once(self, server, tool, arguments, timeout):
         session = self._session_for(server)
+        stats = self._stats.setdefault(server, {"calls": 0, "errors": 0, "reconnects": 0, "last_error": ""})
+        stats["calls"] += 1
         effective = timeout or self._call_timeouts.get(server) or self._call_timeout
-        result = self._run_sync(
-            asyncio.wait_for(session.call_tool(tool, arguments or {}), effective),
-            timeout=effective + 5,
-        )
+        try:
+            result = self._run_sync(
+                asyncio.wait_for(session.call_tool(tool, arguments or {}), effective),
+                timeout=effective + 5,
+            )
+        except MCPClientError as exc:
+            stats["errors"] += 1
+            stats["last_error"] = str(exc)
+            raise
+        except Exception as exc:
+            # 会话对象已失效（如子进程崩溃后 session 不可用）时的非预期异常，
+            # 归一化为 MCPClientError 由上层触发重连
+            stats["errors"] += 1
+            stats["last_error"] = str(exc)
+            raise MCPClientError(str(exc)) from exc
         if getattr(result, "isError", False):
+            stats["errors"] += 1
+            stats["last_error"] = f"MCP 工具 {server}/{tool} 返回错误"
             raise MCPClientError(f"MCP 工具 {server}/{tool} 返回错误: {self._extract_text(result)}")
         return self._extract_payload(result)
+
+    def _maybe_reconnect(self, server):
+        """会话失效后按保存的配置重连：带冷却防风暴，失败只记录不抛出。"""
+        entry = self._servers.get(server)
+        config = (entry or {}).get("config") or self._configs.get(server)
+        if not config or not self._started:
+            return False
+        now = time.monotonic()
+        if now - self._last_reconnect_at.get(server, 0.0) < RECONNECT_COOLDOWN:
+            return False
+        self._last_reconnect_at[server] = now
+        self._servers.pop(server, None)
+        try:
+            self._connect_one(config)
+        except Exception as exc:
+            stats = self._stats.setdefault(server, {"calls": 0, "errors": 0, "reconnects": 0, "last_error": ""})
+            stats["last_error"] = f"重连失败: {exc}"
+            _logger.warning("MCP 服务 %s 重连失败: %s", server, exc)
+            return False
+        self._stats[server]["reconnects"] += 1
+        _logger.info("MCP 服务 %s 已自动重连", server)
+        return True
+
+    def status(self):
+        """连接状态与调用指标：未启动/已关闭时 servers 为空，可安全调用。"""
+        servers = {}
+        for name in sorted(set(self._configs) | set(self._servers)):
+            stats = self._stats.get(name, {})
+            servers[name] = {
+                "connected": name in self._servers,
+                "calls": stats.get("calls", 0),
+                "errors": stats.get("errors", 0),
+                "reconnects": stats.get("reconnects", 0),
+                "last_error": stats.get("last_error", ""),
+            }
+        return {"started": self._started, "servers": servers}
 
     def _session_for(self, server):
         if not self._started:

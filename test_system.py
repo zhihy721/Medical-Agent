@@ -1102,7 +1102,7 @@ def test_mcp_config_and_adapter_degradation():
     import tempfile
     from pathlib import Path
 
-    from mcp_bridge.adapter import build_mcp_tool, register_server_tools
+    from mcp_bridge.adapter import build_mcp_tool, register_server_tools, validate_arguments
     from mcp_bridge.client import MCPClientError, MCPClientManager, build_server_env
     from mcp_bridge.config import MCPConfigError, load_mcp_config
     from tools.registry import ToolRegistry
@@ -1218,6 +1218,43 @@ def test_mcp_config_and_adapter_degradation():
         and fresh_registry.get("demo_server_other_tool") is not None
     )
 
+    # input_schema 本地校验：非法参数在本地拦截，不发起远端调用
+    schema = {
+        "type": "object",
+        "properties": {"location": {"type": "string"}, "limit": {"type": "integer"}},
+        "required": ["location"],
+    }
+    schema_checks = (
+        validate_arguments(schema, {"location": "北京"}) == ""
+        and "必填" in validate_arguments(schema, {})
+        and "未知参数" in validate_arguments(schema, {"location": "北京", "foo": 1})
+        and "类型" in validate_arguments(schema, {"location": 123})
+        and "类型" in validate_arguments(schema, {"location": "北京", "limit": True})
+        and validate_arguments({}, {"anything": 1}) == ""
+    )
+
+    class _RecordingManager:
+        def __init__(self):
+            self.calls = []
+
+        def call_tool(self, server, tool, arguments=None, timeout=None):
+            self.calls.append((server, tool, arguments))
+            return {"ok": True}
+
+    recording = _RecordingManager()
+    guarded_tool = build_mcp_tool(
+        recording, "demo_server",
+        {"name": "guarded", "description": "校验", "input_schema": schema},
+    )
+    blocked = guarded_tool(limit=1)
+    allowed = guarded_tool(location="北京")
+    schema_guard_ok = (
+        schema_checks
+        and blocked["status"] == "error" and "必填" in blocked["error"]
+        and allowed["status"] == "ok"
+        and recording.calls == [("demo_server", "guarded", {"location": "北京"})]
+    )
+
     checks = [
         ("valid mcp config parsed with interpreter normalization", command_normalized),
         ("call_timeout parsed as positive float", timeout_parsed),
@@ -1231,6 +1268,7 @@ def test_mcp_config_and_adapter_degradation():
         ("adapter degrades to error result when disconnected", bool(degraded_ok)),
         ("manager raises MCPClientError when not started", manager_error_ok),
         ("name collision skipped without overwriting", collision_guard_ok),
+        ("schema validation blocks bad args locally", schema_guard_ok),
     ]
 
     passed = True
@@ -1256,6 +1294,10 @@ def test_mcp_end_to_end_hospital_locator():
     os.environ.pop("MEDICAL_AGENT_LOCATION", None)
     try:
         connected = "hospital_locator" in default_manager.connected_servers()
+        # 连接后状态暴露：connected=True 且计数器存在
+        server_status = default_manager.status()["servers"].get("hospital_locator", {})
+        status_ok = server_status.get("connected") is True and "calls" in server_status
+
         tool = default_registry.get("hospital_locator_search_nearby_hospitals")
         result = tool(location="北京", department="急诊") if tool else {"status": "error"}
         data_ok = (
@@ -1265,6 +1307,21 @@ def test_mcp_end_to_end_hospital_locator():
         )
         unknown = tool(location="不存在的城市") if tool else {"data": {}}
         unknown_ok = unknown.get("status") == "ok" and unknown["data"].get("count", 0) == 0
+
+        # 成功调用后指标计数：calls 至少 2 次（前两次查询），errors 为 0
+        after_calls = default_manager.status()["servers"].get("hospital_locator", {})
+        metrics_ok = after_calls.get("calls", 0) >= 2 and after_calls.get("errors", 0) == 0
+
+        # 确定性重连验证：把 session 置为失效对象模拟子进程崩溃，调用应自动重连并成功
+        default_manager._servers["hospital_locator"]["session"] = None
+        recovered = tool(location="北京") if tool else {"status": "error"}
+        after_reconnect = default_manager.status()["servers"].get("hospital_locator", {})
+        reconnect_ok = (
+            recovered.get("status") == "ok"
+            and recovered["data"].get("count", 0) >= 1
+            and after_reconnect.get("reconnects", 0) >= 1
+            and after_reconnect.get("connected") is True
+        )
 
         # 科室过滤无匹配时返回空列表（不静默回退全部）
         no_dept = tool(location="北京", department="儿科") if tool else {"data": {}}
@@ -1295,9 +1352,12 @@ def test_mcp_end_to_end_hospital_locator():
 
     checks = [
         ("mock mcp server connected via stdio", connected),
+        ("status exposes connection state and counters", status_ok),
         ("search_nearby_hospitals returns structured hospitals", data_ok),
         ("unknown location returns empty list without error", unknown_ok),
         ("unmatched department returns empty instead of silent fallback", dept_mismatch_ok),
+        ("call metrics counted without errors", metrics_ok),
+        ("dead session auto-reconnects and recovers", reconnect_ok),
         ("high-risk escalation appends hospitals only when configured", hospital_lines_ok),
     ]
 

@@ -24,6 +24,7 @@ from observability.events import event_logger, setup_events
 from observability.logger import setup_logging
 from observability.metrics import summarize_events
 from mcp_bridge.adapter import connect_mcp_servers, shutdown_mcp_servers
+from mcp_bridge.client import default_manager
 from tools.registry import default_registry
 
 app = Flask(__name__)
@@ -239,6 +240,7 @@ def status():
             "llm_status": snapshot.get("llm_status", {}),
             "llm_degraded": bool(snapshot.get("llm_status", {}).get("degraded")),
             "agent_runtime": getattr(agent, "runtime_name", agent_runtime),
+            "mcp_status": default_manager.status(),
             "config_status": get_config_status(),
             "metrics": llm.get_metrics(),
         }
