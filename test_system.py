@@ -1104,6 +1104,67 @@ def test_corpus_knowledge_and_retrieval():
     )
     no_injection_ok = "知识库参考" not in bare_advice.response
 
+    # R2：LLM prompt 知识上下文注入——真实 provider 路径 prompt 附检索参考，mock 路径原样返回草稿不调 LLM
+    from agent.router import ActionResult
+    from agent.runtime_utils import render_response
+
+    class _RecordingLLM:
+        def __init__(self, provider):
+            self.last_provider_used = provider
+            self.prompts = []
+
+        def call(self, prompt):
+            self.prompts.append(prompt)
+            return "LLM 渲染回复"
+
+    class _SimpleMemory:
+        def get_prompt_context_text(self):
+            return "对话上下文"
+
+        def get_profile_context_text(self):
+            return "画像上下文"
+
+    final_action = ActionResult(
+        name="final_advice",
+        response=enriched_advice.response,
+        status="GENERATING_ADVICE",
+        is_final=True,
+        missing_slots=[],
+        render_mode="final",
+    )
+    case_with_syndrome = {"chief_complaint": "咳嗽", "symptoms": ["咳嗽"]}
+    plan_with_syndrome = {"syndrome_candidates": [{"name": "风寒束表"}]}
+
+    deepseek_llm = _RecordingLLM("deepseek")
+    rendered = render_response(
+        deepseek_llm, _SimpleMemory(), final_action,
+        case_with_syndrome, {"risk": "LOW"}, {"summary": "测试建议"}, plan_with_syndrome,
+    )
+    expected_prompt_hits = [
+        hit for hit in search_knowledge("风寒束表 咳嗽", top_k=6)["hits"]
+        if hit["type"] == "corpus" and hit.get("content")
+    ][:3]
+    prompt_context_ok = (
+        rendered == "LLM 渲染回复"
+        and len(deepseek_llm.prompts) == 1
+        and "knowledge_context:" in deepseek_llm.prompts[0]
+        and all(hit["name"] in deepseek_llm.prompts[0] and hit["content"] in deepseek_llm.prompts[0] for hit in expected_prompt_hits)
+    )
+
+    mock_llm = _RecordingLLM("mock")
+    mock_rendered = render_response(
+        mock_llm, _SimpleMemory(), final_action,
+        case_with_syndrome, {"risk": "LOW"}, {"summary": "测试建议"}, plan_with_syndrome,
+    )
+    mock_path_ok = mock_rendered == final_action.response and not mock_llm.prompts
+
+    bare_llm = _RecordingLLM("deepseek")
+    render_response(
+        bare_llm, _SimpleMemory(), final_action,
+        {"symptoms": ["头晕"]}, {"risk": "LOW"}, {"summary": "测试建议"}, {"syndrome_candidates": []},
+    )
+    empty_context_ok = bool(bare_llm.prompts) and "knowledge_context:\n无" in bare_llm.prompts[0]
+
     checks = [
         ("corpus schema validated with syndrome linkage", schema_ok),
         ("formula query ranks exact formula first", bool(formula_top) and formula_top[0]["id"] == "f_guizhi_tang"),
@@ -1120,6 +1181,9 @@ def test_corpus_knowledge_and_retrieval():
         ("retrieval hits carry corpus content for injection", content_passthrough_ok),
         ("final advice injects corpus reference for matched syndrome", injection_ok),
         ("final advice skips injection without syndrome candidates", no_injection_ok),
+        ("real provider prompt carries knowledge context", prompt_context_ok),
+        ("mock provider returns draft without llm call", mock_path_ok),
+        ("empty retrieval passes placeholder context", empty_context_ok),
     ]
 
     passed = True

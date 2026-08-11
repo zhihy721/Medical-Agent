@@ -1,6 +1,6 @@
 import json
 
-from knowledge.tcm_knowledge import TCM_SLOT_LABELS, normalize_term
+from knowledge.tcm_knowledge import KNOWLEDGE_VERSION, TCM_SLOT_LABELS, normalize_term
 from llm.prompt import EXTRACTION_PROMPT, FINAL_RESPONSE_PROMPT, FOLLOWUP_PROMPT
 from tools.knowledge_tool import search_knowledge
 from tools.symptom_tool import extract_symptoms
@@ -308,8 +308,9 @@ def build_final_advice_action_result(case_state, risk_result, guideline_result, 
         render_mode="final",
     )
 
-# 知识检索注入：检索失败或无命中时静默返回空，绝不阻断最终建议主链路
-def _knowledge_reference_lines(case_state, plan):
+# 共享知识检索：query 构建（top 证型候选 + 主诉）+ 过滤 corpus 命中取前 3；
+# 失败或无命中时静默返回空，绝不阻断主链路；回复注入与 LLM prompt 上下文共用
+def _retrieve_corpus_hits(case_state, plan):
     syndrome_candidates = plan.get("syndrome_candidates") or []
     chief_complaint = case_state.get("chief_complaint", "")
     query_parts = [item["name"] for item in syndrome_candidates[:1]]
@@ -322,22 +323,33 @@ def _knowledge_reference_lines(case_state, plan):
         retrieval = search_knowledge(query, top_k=6)
     except Exception:
         return []
-    corpus_hits = [
+    return [
         hit for hit in retrieval.get("hits", [])
         if hit.get("type") == "corpus" and hit.get("content")
-    ]
+    ][:3]
+
+
+# 回复注入：把方剂/调护/FAQ 语料参考行附在最终建议末尾
+def _knowledge_reference_lines(case_state, plan):
+    corpus_hits = _retrieve_corpus_hits(case_state, plan)
     if not corpus_hits:
         return []
 
     lines = ["知识库参考（演示语料，具体用药需医师辨证）："]
-    for hit in corpus_hits[:3]:
+    for hit in corpus_hits:
         prefix = "参考方剂" if (hit.get("source") or "").endswith("formulas.json") else "调护参考"
         lines.append(f"- [{prefix}] {hit['name']}：{hit['content']}")
-    version = retrieval.get("knowledge_version") or {}
-    if isinstance(version, dict) and version:
-        version_text = "、".join(f"{key}={value}" for key, value in version.items())
-        lines.append(f"知识库版本：{version_text}")
+    version_text = "、".join(f"{key}={value}" for key, value in KNOWLEDGE_VERSION.items())
+    lines.append(f"知识库版本：{version_text}")
     return lines
+
+
+# LLM prompt 知识上下文：每条命中一行，无命中传"无"（prompt 要求忽略）
+def _knowledge_context_text(case_state, plan):
+    corpus_hits = _retrieve_corpus_hits(case_state, plan)
+    if not corpus_hits:
+        return "无"
+    return "\n".join(f"【{hit['name']}】{hit['content']}" for hit in corpus_hits)
 
 
 # 信息冲突澄清的结果构建
@@ -463,6 +475,7 @@ def render_response(llm, memory, action_result, case_state, risk_result, guideli
                 plan=json.dumps(plan, ensure_ascii=False),
                 planned_action=action_result.name,
                 action_draft=action_result.response,
+                knowledge_context=_knowledge_context_text(case_state, plan),
                 profile_context=profile_context,
                 conversation_context=conversation_context,
             )
