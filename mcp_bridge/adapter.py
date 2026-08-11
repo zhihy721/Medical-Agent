@@ -10,14 +10,56 @@ _logger = get_logger("mcp_bridge.adapter")
 # 远端工具统一版本标记：具体行为由服务端决定，此版本仅标识适配层协议
 MCP_TOOL_VERSION = "mcp-1.0"
 
+# JSON Schema 类型到 Python 类型的轻量映射；integer 排除 bool（bool 是 int 子类）
+_SCHEMA_TYPES = {
+    "string": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "boolean": (bool,),
+    "array": (list,),
+    "object": (dict,),
+}
+
+
+def validate_arguments(input_schema, arguments):
+    """按远端工具的 input_schema 本地校验参数，返回错误消息（空串表示通过）。
+
+    轻量校验：required 缺失、未知参数（properties 已定义时）、类型不匹配；
+    schema 为空或无 properties 时不做类型约束（宽松兼容）。失败在本地拦截，
+    不发起远端调用。
+    """
+    if not isinstance(input_schema, dict) or not input_schema:
+        return ""
+    arguments = arguments or {}
+    for field in input_schema.get("required", []):
+        if field not in arguments:
+            return f"缺少必填参数 {field}"
+    properties = input_schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return ""
+    for key, value in arguments.items():
+        prop = properties.get(key)
+        if prop is None:
+            return f"未知参数 {key}，可用参数为 {sorted(properties)}"
+        expected = _SCHEMA_TYPES.get(prop.get("type", "")) if isinstance(prop, dict) else None
+        if expected and not isinstance(value, expected):
+            return f"参数 {key} 类型应为 {prop['type']}，实际为 {type(value).__name__}"
+        if prop.get("type") == "integer" and isinstance(value, bool):
+            return f"参数 {key} 类型应为 integer，实际为 bool"
+    return ""
+
 
 def build_mcp_tool(manager, server_name, tool_info):
     """把单个远端工具适配为 managed_tool 装饰的同步函数，工具名为 {server}_{tool} 防冲突。"""
     local_name = f"{server_name}_{tool_info['name']}"
     remote_name = tool_info["name"]
     description = tool_info.get("description") or f"MCP 远端工具 {server_name}/{remote_name}"
+    input_schema = tool_info.get("input_schema") or {}
 
     def _invoke(**kwargs):
+        error = validate_arguments(input_schema, kwargs)
+        if error:
+            raise ValueError(error)
         return manager.call_tool(server_name, remote_name, kwargs)
 
     return managed_tool(local_name, MCP_TOOL_VERSION, description)(_invoke)
