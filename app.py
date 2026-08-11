@@ -1,3 +1,4 @@
+import atexit
 import os
 import threading
 import time
@@ -22,6 +23,7 @@ from memory.session_store import InMemorySessionStore, JsonFileSessionStore
 from observability.events import event_logger, setup_events
 from observability.logger import setup_logging
 from observability.metrics import summarize_events
+from mcp_bridge.adapter import connect_mcp_servers, shutdown_mcp_servers
 from tools.registry import default_registry
 
 app = Flask(__name__)
@@ -30,6 +32,10 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "medical-agent-demo-secret")
 apply_config_to_environment()
 llm = LLM(system_prompt=SYSTEM_PROMPT)
 agent_runtime = get_agent_runtime()
+
+# MCP 接入：连接 enabled 的远端服务并注册其工具；任何失败只降级跳过，不影响应用启动
+connect_mcp_servers()
+atexit.register(shutdown_mcp_servers)
 
 
 class SessionCache:

@@ -1095,6 +1095,153 @@ def test_corpus_knowledge_and_retrieval():
     return passed
 
 
+# 测试 MCP 接入基础：配置加载校验、非法配置报错、未连接时调用降级为 error 而非异常
+def test_mcp_config_and_adapter_degradation():
+    import json
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    from mcp_bridge.adapter import build_mcp_tool
+    from mcp_bridge.client import MCPClientError, MCPClientManager
+    from mcp_bridge.config import MCPConfigError, load_mcp_config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        valid_path = Path(tmp) / "valid.json"
+        valid_path.write_text(
+            json.dumps(
+                {
+                    "version": "1.0.0",
+                    "servers": [
+                        {"name": "demo", "transport": "stdio", "command": "python", "args": [], "env": {}, "enabled": True}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        valid = load_mcp_config(valid_path)
+        command_normalized = valid[0]["command"] == sys.executable
+
+        bad_transport = Path(tmp) / "bad_transport.json"
+        bad_transport.write_text(
+            json.dumps({"version": "1.0.0", "servers": [{"name": "x", "transport": "ftp", "enabled": True, "command": "python"}]}),
+            encoding="utf-8",
+        )
+        bad_enabled = Path(tmp) / "bad_enabled.json"
+        bad_enabled.write_text(
+            json.dumps({"version": "1.0.0", "servers": [{"name": "x", "transport": "stdio", "enabled": "yes", "command": "python"}]}),
+            encoding="utf-8",
+        )
+        transport_error = enabled_error = False
+        try:
+            load_mcp_config(bad_transport)
+        except MCPConfigError:
+            transport_error = True
+        try:
+            load_mcp_config(bad_enabled)
+        except MCPConfigError:
+            enabled_error = True
+
+    # 项目自带配置可加载：hospital_locator 启用、pulse_device 占位禁用
+    project_servers = {entry["name"]: entry for entry in load_mcp_config()}
+    project_config_ok = (
+        project_servers.get("hospital_locator", {}).get("enabled") is True
+        and project_servers.get("pulse_device", {}).get("enabled") is False
+    )
+
+    # 未启动的管理器：适配工具返回标准 error ToolResult 而非抛异常
+    manager = MCPClientManager()
+    tool = build_mcp_tool(manager, "demo_server", {"name": "demo_tool", "description": "演示"})
+    result = tool(foo="bar")
+    degraded_ok = result["status"] == "error" and result["error"]
+    manager_error_ok = False
+    try:
+        manager.call_tool("demo_server", "demo_tool", {})
+    except MCPClientError:
+        manager_error_ok = True
+
+    checks = [
+        ("valid mcp config parsed with interpreter normalization", command_normalized),
+        ("invalid transport rejected", transport_error),
+        ("non-bool enabled rejected", enabled_error),
+        ("project mcp config loads with expected flags", project_config_ok),
+        ("adapter degrades to error result when disconnected", bool(degraded_ok)),
+        ("manager raises MCPClientError when not started", manager_error_ok),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
+# 测试 MCP 端到端：真实启动仓库内 mock 地图服务，调用返回结构正确，HIGH 升级回复可附加医院清单
+def test_mcp_end_to_end_hospital_locator():
+    import os
+
+    from agent.runtime_utils import build_risk_escalation_action_result
+    from mcp_bridge.adapter import connect_mcp_servers, shutdown_mcp_servers
+    from mcp_bridge.client import default_manager
+    from tools.registry import default_registry
+
+    connect_mcp_servers()
+    os.environ.pop("MEDICAL_AGENT_LOCATION", None)
+    try:
+        connected = "hospital_locator" in default_manager.connected_servers()
+        tool = default_registry.get("hospital_locator_search_nearby_hospitals")
+        result = tool(location="北京", department="急诊") if tool else {"status": "error"}
+        data_ok = (
+            result.get("status") == "ok"
+            and result["data"].get("count", 0) >= 2
+            and all(h.get("name") and "distance_km" in h for h in result["data"].get("hospitals", []))
+        )
+        unknown = tool(location="不存在的城市") if tool else {"data": {}}
+        unknown_ok = unknown.get("status") == "ok" and unknown["data"].get("count", 0) == 0
+
+        # HIGH 升级回复：配置位置后附加医院清单；未配置时不附加（保持既有回复形态）
+        bare = build_risk_escalation_action_result(
+            {"symptoms": ["胸痛"]},
+            {"risk": "HIGH", "reason": "测试原因", "disposition": "建议就医"},
+            {"advice": []},
+            {"syndrome_candidates": []},
+        )
+        os.environ["MEDICAL_AGENT_LOCATION"] = "北京"
+        enriched = build_risk_escalation_action_result(
+            {"symptoms": ["胸痛"]},
+            {"risk": "HIGH", "reason": "测试原因", "disposition": "建议就医"},
+            {"advice": []},
+            {"syndrome_candidates": []},
+        )
+        hospital_lines_ok = (
+            "医院可前往" not in bare.response
+            and "医院可前往" in enriched.response
+            and "北京协和医院" in enriched.response
+        )
+    finally:
+        os.environ.pop("MEDICAL_AGENT_LOCATION", None)
+        shutdown_mcp_servers()
+
+    checks = [
+        ("mock mcp server connected via stdio", connected),
+        ("search_nearby_hospitals returns structured hospitals", data_ok),
+        ("unknown location returns empty list without error", unknown_ok),
+        ("high-risk escalation appends hospitals only when configured", hospital_lines_ok),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
 # 测试红旗否定句豁免：否认表述不误报红旗，后置否定与非否定命中不受影响
 def test_red_flag_negation_exemption():
     from tools.symptom_tool import extract_symptoms
@@ -1423,6 +1570,8 @@ def main():
         test_config_validation_friendly_errors(),
         test_risk_rules_externalized(),
         test_corpus_knowledge_and_retrieval(),
+        test_mcp_config_and_adapter_degradation(),
+        test_mcp_end_to_end_hospital_locator(),
     ]
     passed = sum(results)
     total = len(results)

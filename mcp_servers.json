@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "description": "MCP 服务接入配置：transport 当前支持 stdio（streamable_http 预留，v1 未实现）。command 为 python 时自动替换为当前解释器；args 中相对路径的 .py 文件按项目根目录解析。内容为演示级。",
+  "servers": [
+    {
+      "name": "hospital_locator",
+      "transport": "stdio",
+      "command": "python",
+      "args": ["mcp_servers/hospital_locator.py"],
+      "env": {},
+      "enabled": true,
+      "description": "仓库内 mock 地图服务：附近医院查询（纯演示数据，无外部 API）"
+    },
+    {
+      "name": "pulse_device",
+      "transport": "stdio",
+      "command": "python",
+      "args": ["mcp_servers/pulse_device.py"],
+      "env": {},
+      "enabled": false,
+      "description": "硬件接入占位示例：脉诊仪/穿戴设备服务应暴露读取类工具，适配后可将其输出传给 agent.ingest_pulse_data。设备服务端就绪后把 enabled 改为 true。"
+    }
+  ]
+}
