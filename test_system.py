@@ -1165,6 +1165,33 @@ def test_corpus_knowledge_and_retrieval():
     )
     empty_context_ok = bool(bare_llm.prompts) and "knowledge_context:\n无" in bare_llm.prompts[0]
 
+    # R3：TF-IDF 对比后端——与 BM25 同金标准的确定性排名，命中结构一致（含 content）
+    from knowledge.retriever import TFIDFRetriever
+
+    tfidf = TFIDFRetriever()
+    tfidf_formula_top = tfidf.search("桂枝汤", top_k=1)
+    tfidf_faq_top = tfidf.search("感冒了能喝姜汤吗", top_k=1)
+    tfidf_ok = (
+        bool(tfidf_formula_top) and tfidf_formula_top[0]["id"] == "f_guizhi_tang"
+        and bool(tfidf_faq_top) and tfidf_faq_top[0]["id"] == "faq_cold_ginger_soup"
+        and tfidf.search("qwerty", top_k=3) == []
+        and tfidf.search("", top_k=3) == []
+        and all(
+            {"id", "title", "category", "score", "source", "content"} <= set(hit)
+            for hit in tfidf_formula_top + tfidf_faq_top
+        )
+    )
+
+    # 对比脚本统计函数单测：MRR 与平均排名计算正确，空列表降级为 0
+    from evaluation.compare_retrievers import summarize
+
+    mrr, avg_rank = summarize([1, 2, 4])
+    stats_ok = (
+        abs(mrr - (1 + 0.5 + 0.25) / 3) < 1e-9
+        and abs(avg_rank - 7 / 3) < 1e-9
+        and summarize([]) == (0.0, 0.0)
+    )
+
     checks = [
         ("corpus schema validated with syndrome linkage", schema_ok),
         ("formula query ranks exact formula first", bool(formula_top) and formula_top[0]["id"] == "f_guizhi_tang"),
@@ -1184,6 +1211,8 @@ def test_corpus_knowledge_and_retrieval():
         ("real provider prompt carries knowledge context", prompt_context_ok),
         ("mock provider returns draft without llm call", mock_path_ok),
         ("empty retrieval passes placeholder context", empty_context_ok),
+        ("tfidf backend ranks gold queries deterministically", tfidf_ok),
+        ("compare script rank statistics correct", stats_ok),
     ]
 
     passed = True

@@ -100,3 +100,73 @@ class BM25Retriever(Retriever):
 
 # 默认全局检索器：模块加载时建索引，同 query 结果确定可复现
 DEFAULT_RETRIEVER = BM25Retriever()
+
+
+class TFIDFRetriever(Retriever):
+    """零依赖轻量 TF-IDF：索引面与 BM25 完全一致（同 tokenizer、标题+标签+正文），
+    仅打分策略不同：sublinear TF（1+log tf）× IDF，文档/查询向量 L2 归一化后余弦相似度。
+    作为 BM25 的对比后端（及后续远程 embedding 的前置参照），
+    质量对比由 evaluation/compare_retrievers.py 输出，确定性可复现。
+    """
+
+    def __init__(self, entries=None):
+        self._entries = list(entries) if entries is not None else get_corpus()
+        self._doc_freqs = []
+        self._df = {}
+        for entry in self._entries:
+            # 检索面与 BM25 保持一致，保证对比的唯一变量是打分策略
+            text = " ".join([entry.get("title", "")] + list(entry.get("tags", [])) + [entry.get("content", "")])
+            freq = {}
+            for token in tokenize(text):
+                freq[token] = freq.get(token, 0) + 1
+            self._doc_freqs.append(freq)
+            for token in freq:
+                self._df[token] = self._df.get(token, 0) + 1
+        self._doc_count = len(self._entries)
+        # 文档权重向量预计算（检索时纯查表）：sublinear TF × IDF，L2 归一化
+        self._doc_weights = []
+        for freq in self._doc_freqs:
+            weights = {token: (1 + math.log(tf)) * self._idf(token) for token, tf in freq.items()}
+            norm = math.sqrt(sum(weight * weight for weight in weights.values())) or 1.0
+            self._doc_weights.append({token: weight / norm for token, weight in weights.items()})
+
+    def _idf(self, token):
+        df = self._df.get(token, 0)
+        return math.log((1 + self._doc_count) / (1 + df)) + 1.0
+
+    def search(self, query, top_k=5):
+        query = (query or "").strip()
+        if not query or not self._doc_count:
+            return []
+        freq = {}
+        for token in tokenize(query):
+            freq[token] = freq.get(token, 0) + 1
+        if not freq:
+            return []
+        weights = {token: (1 + math.log(tf)) * self._idf(token) for token, tf in freq.items()}
+        norm = math.sqrt(sum(weight * weight for weight in weights.values())) or 1.0
+        query_weights = {token: weight / norm for token, weight in weights.items()}
+
+        scores = []
+        for index, doc_weights in enumerate(self._doc_weights):
+            score = sum(weight * doc_weights[token] for token, weight in query_weights.items() if token in doc_weights)
+            if score > 0:
+                scores.append((score, index))
+
+        # 排序规则与 BM25 一致：分数降序，同分按 id 稳定可复现
+        scores.sort(key=lambda item: (-item[0], self._entries[item[1]]["id"]))
+        top_k = max(1, min(int(top_k), 20))
+        hits = []
+        for score, index in scores[:top_k]:
+            entry = self._entries[index]
+            hits.append(
+                {
+                    "id": entry["id"],
+                    "title": entry["title"],
+                    "category": entry.get("category", ""),
+                    "score": round(score, 3),
+                    "source": entry.get("source_file", ""),
+                    "content": entry.get("content", ""),
+                }
+            )
+        return hits
