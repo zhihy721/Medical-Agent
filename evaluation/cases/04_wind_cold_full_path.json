@@ -30,7 +30,7 @@
         "next_action": "final_advice",
         "is_final": true,
         "syndromes_contain": ["风寒束表"],
-        "response_contain": ["不能替代医生面诊"],
+        "response_contain": ["不能替代医生面诊", "知识库参考"],
         "knowledge_query": "风寒束表",
         "knowledge_hits_contain": ["桂枝汤", "风寒束表饮食调护"]
       }

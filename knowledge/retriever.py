@@ -91,6 +91,8 @@ class BM25Retriever(Retriever):
                     "category": entry.get("category", ""),
                     "score": round(score, 3),
                     "source": entry.get("source_file", ""),
+                    # content 为自包含文本段，透传给下游直接引用（RAG 注入回复）
+                    "content": entry.get("content", ""),
                 }
             )
         return hits

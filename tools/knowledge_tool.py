@@ -118,6 +118,7 @@ def _search_corpus(query, top_k):
             "score": round(item["score"] * scale, 2),
             "category": item["category"],
             "source": item["source"],
+            "content": item.get("content", ""),
         }
         for item in raw
     ]

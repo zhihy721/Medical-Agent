@@ -2,6 +2,7 @@ import json
 
 from knowledge.tcm_knowledge import TCM_SLOT_LABELS, normalize_term
 from llm.prompt import EXTRACTION_PROMPT, FINAL_RESPONSE_PROMPT, FOLLOWUP_PROMPT
+from tools.knowledge_tool import search_knowledge
 from tools.symptom_tool import extract_symptoms
 
 # 降低LLM负担
@@ -236,8 +237,8 @@ def build_risk_escalation_action_result(case_state, risk_result, guideline_resul
     # 外部知识库增强，提供一些常见的高风险症状组合和处理建议，帮助用户理解风险的具体表现和应对措施
     for advice in guideline_result.get("advice", []):
         lines.append(f"- {advice}")
-    # MCP 可选增强：附加附近医院清单；未配置位置、工具不可用或调用失败均静默跳过
-    lines.extend(_nearby_hospital_lines())
+    # MCP 可选增强：附加附近医院清单；无位置来源、工具不可用或调用失败均静默跳过
+    lines.extend(_nearby_hospital_lines(case_state))
 
     return ActionResult(
         name="risk_escalation",
@@ -248,13 +249,14 @@ def build_risk_escalation_action_result(case_state, risk_result, guideline_resul
         render_mode="final",
     )
 
-# 高风险升级回复的附近医院建议：仅当 hospital_locator MCP 工具已注册且配置了位置时附加
-def _nearby_hospital_lines():
+# 高风险升级回复的附近医院建议：仅当 hospital_locator MCP 工具已注册且有位置来源时附加
+# 位置优先级：会话中抽取的城市（city 槽位） > MEDICAL_AGENT_LOCATION 环境变量（手动覆盖）
+def _nearby_hospital_lines(case_state):
     import os
 
     from tools.registry import default_registry
 
-    location = os.getenv("MEDICAL_AGENT_LOCATION", "").strip()
+    location = (case_state.get("city") or "").strip() or os.getenv("MEDICAL_AGENT_LOCATION", "").strip()
     if not location:
         return []
     tool = default_registry.get("hospital_locator_search_nearby_hospitals")
@@ -294,6 +296,8 @@ def build_final_advice_action_result(case_state, risk_result, guideline_result, 
     ]
     for advice in guideline_result.get("advice", []):
         parts.append(f"- {advice}")
+    # RAG 注入：以 top 证型候选 + 主诉检索方剂/调护/FAQ 语料，附在建议末尾
+    parts.extend(_knowledge_reference_lines(case_state, plan))
 
     return ActionResult(
         name="final_advice",
@@ -303,6 +307,38 @@ def build_final_advice_action_result(case_state, risk_result, guideline_result, 
         missing_slots=[],
         render_mode="final",
     )
+
+# 知识检索注入：检索失败或无命中时静默返回空，绝不阻断最终建议主链路
+def _knowledge_reference_lines(case_state, plan):
+    syndrome_candidates = plan.get("syndrome_candidates") or []
+    chief_complaint = case_state.get("chief_complaint", "")
+    query_parts = [item["name"] for item in syndrome_candidates[:1]]
+    if chief_complaint:
+        query_parts.append(chief_complaint)
+    query = " ".join(part for part in query_parts if part).strip()
+    if not query:
+        return []
+    try:
+        retrieval = search_knowledge(query, top_k=6)
+    except Exception:
+        return []
+    corpus_hits = [
+        hit for hit in retrieval.get("hits", [])
+        if hit.get("type") == "corpus" and hit.get("content")
+    ]
+    if not corpus_hits:
+        return []
+
+    lines = ["知识库参考（演示语料，具体用药需医师辨证）："]
+    for hit in corpus_hits[:3]:
+        prefix = "参考方剂" if (hit.get("source") or "").endswith("formulas.json") else "调护参考"
+        lines.append(f"- [{prefix}] {hit['name']}：{hit['content']}")
+    version = retrieval.get("knowledge_version") or {}
+    if isinstance(version, dict) and version:
+        version_text = "、".join(f"{key}={value}" for key, value in version.items())
+        lines.append(f"知识库版本：{version_text}")
+    return lines
+
 
 # 信息冲突澄清的结果构建
 def build_clarify_conflict_action_result(case_state, plan):
