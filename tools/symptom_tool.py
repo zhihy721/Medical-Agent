@@ -45,6 +45,14 @@ SEVERITY_PATTERNS = [
     ("重度", ["严重", "剧烈", "很重", "受不了"]),
 ]
 
+# 城市词表：与 hospital_locator 演示数据覆盖一致，后续接真实服务再扩
+# 仅作机会式抽取（不进追问槽位），用于附近医院建议的定位
+CITY_KEYWORDS = {
+    "北京": ["北京"],
+    "上海": ["上海"],
+    "广州": ["广州"],
+}
+
 # 红旗信号表统一由知识库 red_flags.json 提供，避免多处硬编码不一致
 RED_FLAG_PATTERNS = {item["label"]: item["aliases"] for item in get_red_flags()}
 
@@ -219,6 +227,13 @@ def _extract_sex(text):
     return ""
 
 
+def _extract_city(text):
+    for city, keywords in CITY_KEYWORDS.items():
+        if any(keyword in text for keyword in keywords):
+            return city
+    return ""
+
+
 def _extract_medications(text):
     meds = []
     for _, med in MEDICATION_PATTERN.findall(text):
@@ -263,6 +278,7 @@ def extract_symptoms_tool(text):
         "duration": _extract_duration(normalized_text),
         "severity": _extract_severity(normalized_text),
         "location": _extract_location(normalized_text),
+        "city": _extract_city(normalized_text),
         "age": _extract_age(normalized_text),
         "sex": _extract_sex(normalized_text),
         "past_history": history,
@@ -291,6 +307,7 @@ def _empty_extraction(text):
         "duration": "",
         "severity": "",
         "location": "",
+        "city": "",
         "age": "",
         "sex": "",
         "past_history": [],

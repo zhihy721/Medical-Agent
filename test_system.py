@@ -1070,6 +1070,40 @@ def test_corpus_knowledge_and_retrieval():
     merged = search_knowledge("柴胡疏肝散")
     merged_corpus = [hit for hit in merged["hits"] if hit["type"] == "corpus"]
 
+    # RAG 注入：content 透传到检索命中，最终建议按证型+主诉附语料参考
+    from agent.runtime_utils import build_final_advice_action_result
+
+    content_passthrough_ok = (
+        bool(formula_top) and bool(formula_top[0].get("content"))
+        and bool(merged_corpus) and all(hit.get("content") for hit in merged_corpus)
+    )
+
+    enriched_advice = build_final_advice_action_result(
+        {"chief_complaint": "咳嗽", "symptoms": ["咳嗽"], "tcm_summary": "恶寒无汗"},
+        {"risk": "LOW"},
+        {"summary": "测试建议", "advice": []},
+        {"syndrome_candidates": [{"name": "风寒束表"}], "completion_label": "基本完成", "confidence": 0.8},
+    )
+    expected_contents = [
+        hit["content"]
+        for hit in search_knowledge("风寒束表 咳嗽", top_k=6)["hits"]
+        if hit["type"] == "corpus" and hit.get("content")
+    ][:3]
+    injection_ok = (
+        bool(expected_contents)
+        and "知识库参考" in enriched_advice.response
+        and "知识库版本" in enriched_advice.response
+        and all(content in enriched_advice.response for content in expected_contents)
+    )
+
+    bare_advice = build_final_advice_action_result(
+        {"symptoms": ["头晕"], "tcm_summary": ""},
+        {"risk": "LOW"},
+        {"summary": "测试建议", "advice": []},
+        {"syndrome_candidates": [], "completion_label": "待评估", "confidence": 0.2},
+    )
+    no_injection_ok = "知识库参考" not in bare_advice.response
+
     checks = [
         ("corpus schema validated with syndrome linkage", schema_ok),
         ("formula query ranks exact formula first", bool(formula_top) and formula_top[0]["id"] == "f_guizhi_tang"),
@@ -1083,6 +1117,9 @@ def test_corpus_knowledge_and_retrieval():
             "knowledge tool merges corpus hits",
             any(hit["name"] == "柴胡疏肝散" for hit in merged_corpus) and all(hit.get("source") for hit in merged_corpus),
         ),
+        ("retrieval hits carry corpus content for injection", content_passthrough_ok),
+        ("final advice injects corpus reference for matched syndrome", injection_ok),
+        ("final advice skips injection without syndrome candidates", no_injection_ok),
     ]
 
     passed = True
@@ -1346,6 +1383,26 @@ def test_mcp_end_to_end_hospital_locator():
             and "医院可前往" in enriched.response
             and "北京协和医院" in enriched.response
         )
+
+        # city 槽位优先级链：会话抽取的城市优先于 env；无位置来源时不附加
+        os.environ.pop("MEDICAL_AGENT_LOCATION", None)
+        city_driven = build_risk_escalation_action_result(
+            {"symptoms": ["胸痛"], "city": "上海"},
+            {"risk": "HIGH", "reason": "测试原因", "disposition": "建议就医"},
+            {"advice": []},
+            {"syndrome_candidates": []},
+        )
+        os.environ["MEDICAL_AGENT_LOCATION"] = "北京"
+        city_over_env = build_risk_escalation_action_result(
+            {"symptoms": ["胸痛"], "city": "广州"},
+            {"risk": "HIGH", "reason": "测试原因", "disposition": "建议就医"},
+            {"advice": []},
+            {"syndrome_candidates": []},
+        )
+        city_slot_ok = (
+            "就近位于上海" in city_driven.response
+            and "就近位于广州" in city_over_env.response
+        )
     finally:
         os.environ.pop("MEDICAL_AGENT_LOCATION", None)
         shutdown_mcp_servers()
@@ -1359,6 +1416,7 @@ def test_mcp_end_to_end_hospital_locator():
         ("call metrics counted without errors", metrics_ok),
         ("dead session auto-reconnects and recovers", reconnect_ok),
         ("high-risk escalation appends hospitals only when configured", hospital_lines_ok),
+        ("conversation city slot drives hospital list over env", city_slot_ok),
     ]
 
     passed = True
@@ -1384,6 +1442,39 @@ def test_red_flag_negation_exemption():
         ("negated symptoms still extracted", "乏力" in denied["symptoms"]),
         ("affirmed red flag still reported", "持续胸痛" in affirmed["red_flags"]),
         ("non-negated occurrence wins", "便血" in mixed["red_flags"]),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
+# 测试城市槽位：机会式抽取、覆盖式合并进 case_state，不进追问槽位表
+def test_city_slot_extraction_and_merge():
+    from knowledge.tcm_knowledge import TCM_SLOT_LABELS
+    from memory.memory import ConversationMemory
+    from tools.symptom_tool import extract_symptoms
+
+    with_city = extract_symptoms("我在上海，这两天咳嗽怕冷，有点发热")
+    without_city = extract_symptoms("这两天咳嗽怕冷，有点发热")
+
+    memory = ConversationMemory()
+    memory.update_case(with_city)
+    first_city = memory.get_case_state().get("city")
+    memory.update_case({"city": "北京"})
+    state = memory.get_case_state()
+
+    checks = [
+        ("city extracted from free text", with_city["city"] == "上海"),
+        ("text without city yields empty slot", without_city["city"] == ""),
+        ("city merged into case_state", first_city == "上海"),
+        ("latest city statement overwrites previous", state["city"] == "北京"),
+        ("city stays out of triage slot labels", "city" not in TCM_SLOT_LABELS),
     ]
 
     passed = True
@@ -1692,6 +1783,7 @@ def main():
         test_contradiction_resolution(),
         test_planner_no_empty_bundle(),
         test_red_flag_negation_exemption(),
+        test_city_slot_extraction_and_merge(),
         test_classic_runtime_resolves_contradiction(),
         test_session_cache_lifecycle(),
         test_atomic_json_write(),
