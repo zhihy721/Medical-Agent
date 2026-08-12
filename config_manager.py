@@ -49,8 +49,10 @@ def read_config():
 
 def apply_config_to_environment(config=None):
     config = config or read_config()
-    for key in DEFAULT_CONFIG:
-        value = str(config.get(key, "")).strip()
+    # 应用全部配置键（含手填的可选键如 AMAP_API_KEY/HOSPITAL_DATA_URL），
+    # web 配置页与序列化仍只管 DEFAULT_CONFIG 键
+    for key, value in config.items():
+        value = str(value).strip()
         if value:
             import os
 

@@ -1346,6 +1346,8 @@ def test_mcp_config_and_adapter_degradation():
     import os
 
     os.environ["MEDICAL_FAKE_SECRET"] = "should-not-leak"
+    os.environ["AMAP_API_KEY"] = "fake-amap-key"
+    os.environ["HOSPITAL_DATA_URL"] = "http://127.0.0.1:9/hospitals.json"
     try:
         minimal = build_server_env({})
         env_minimized = (
@@ -1354,10 +1356,17 @@ def test_mcp_config_and_adapter_degradation():
             and minimal.get("PYTHONUTF8") == "1"
             and minimal.get("PYTHONIOENCODING") == "utf-8"
         )
+        # C7：hospital_locator 数据源键点名透传给子进程（否则实际 stdio 部署收不到配置）
+        env_datasource_passthrough_ok = (
+            minimal.get("AMAP_API_KEY") == "fake-amap-key"
+            and minimal.get("HOSPITAL_DATA_URL") == "http://127.0.0.1:9/hospitals.json"
+        )
         overridden = build_server_env({"PYTHONIOENCODING": "gbk", "CUSTOM_VAR": "v"})
         env_override_ok = overridden["PYTHONIOENCODING"] == "gbk" and overridden["CUSTOM_VAR"] == "v"
     finally:
         os.environ.pop("MEDICAL_FAKE_SECRET", None)
+        os.environ.pop("AMAP_API_KEY", None)
+        os.environ.pop("HOSPITAL_DATA_URL", None)
 
     # 未启动的管理器：适配工具返回标准 error ToolResult 而非抛异常
     manager = MCPClientManager()
@@ -1436,6 +1445,7 @@ def test_mcp_config_and_adapter_degradation():
         ("non-positive call_timeout rejected", timeout_error),
         ("project mcp config loads with expected flags", project_config_ok),
         ("server env minimized with utf-8 defaults", env_minimized),
+        ("data source env keys passed through to server env", env_datasource_passthrough_ok),
         ("config env overrides defaults", env_override_ok),
         ("adapter degrades to error result when disconnected", bool(degraded_ok)),
         ("manager raises MCPClientError when not started", manager_error_ok),
@@ -1556,9 +1566,57 @@ def test_mcp_end_to_end_hospital_locator():
             and fallback_payload.get("count", 0) > 0
             and "已回退演示数据" in fallback_payload.get("note", "")
         )
+
+        # C7：高德地图数据源——解析函数离线验证；仅配 key 但服务不可达时回退演示数据并在 note 标注
+        from mcp_servers.hospital_locator import _parse_amap_pois
+
+        amap_payload = {
+            "status": "1",
+            "pois": [
+                {"name": "示例人民医院", "adname": "示例区"},
+                {"noname": True},
+            ],
+        }
+        parsed_pois = _parse_amap_pois(amap_payload)
+        amap_error_rejected = False
+        try:
+            _parse_amap_pois({"status": "0"})
+        except ValueError:
+            amap_error_rejected = True
+        amap_parse_ok = (
+            len(parsed_pois) == 1
+            and parsed_pois[0]["name"] == "示例人民医院"
+            and parsed_pois[0]["district"] == "示例区"
+            and parsed_pois[0]["departments"] == []
+            and amap_error_rejected
+        )
+
+        os.environ["AMAP_API_KEY"] = "fake-key"
+        os.environ["AMAP_BASE_URL"] = "http://127.0.0.1:9"
+        try:
+            amap_fallback_payload = json.loads(raw_search("北京"))
+        finally:
+            os.environ.pop("AMAP_API_KEY", None)
+            os.environ.pop("AMAP_BASE_URL", None)
+        amap_fallback_ok = (
+            amap_fallback_payload.get("count", 0) > 0
+            and "高德地图服务不可用" in amap_fallback_payload.get("note", "")
+        )
+
+        # 数据源优先级：同时配置静态 URL 与高德 key 时走 URL 分支（note 为静态源回退措辞而非高德）
+        os.environ["AMAP_API_KEY"] = "fake-key"
+        os.environ["HOSPITAL_DATA_URL"] = "http://127.0.0.1:9/hospitals.json"
+        try:
+            url_priority_payload = json.loads(raw_search("北京"))
+        finally:
+            os.environ.pop("AMAP_API_KEY", None)
+            os.environ.pop("HOSPITAL_DATA_URL", None)
+        url_priority_ok = "外部数据源不可用" in url_priority_payload.get("note", "")
     finally:
         os.environ.pop("MEDICAL_AGENT_LOCATION", None)
         os.environ.pop("HOSPITAL_DATA_URL", None)
+        os.environ.pop("AMAP_API_KEY", None)
+        os.environ.pop("AMAP_BASE_URL", None)
         shutdown_mcp_servers()
 
     checks = [
@@ -1572,6 +1630,9 @@ def test_mcp_end_to_end_hospital_locator():
         ("high-risk escalation appends hospitals only when configured", hospital_lines_ok),
         ("conversation city slot drives hospital list over env", city_slot_ok),
         ("hospital data source falls back to demo when remote unreachable", data_source_switch_ok),
+        ("amap poi payload parses into honest entries", amap_parse_ok),
+        ("amap unreachable falls back to demo with note", amap_fallback_ok),
+        ("static url takes priority over amap source", url_priority_ok),
     ]
 
     passed = True

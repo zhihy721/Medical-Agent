@@ -25,6 +25,9 @@ if sys.platform == "win32":
     _ENV_PASSTHROUGH += ["SystemRoot", "SystemDrive", "TEMP", "TMP", "USERPROFILE", "PATHEXT"]
 else:
     _ENV_PASSTHROUGH += ["HOME", "LANG", "LC_ALL"]
+# 点名透传仓库内服务使用的数据源键：hospital_locator 的高德地图 key 与静态数据源 URL
+# （不透传时配置仅对 in-process 调用生效，实际 stdio 子进程收不到）
+_ENV_PASSTHROUGH += ["AMAP_API_KEY", "HOSPITAL_DATA_URL"]
 
 
 def build_server_env(extra_env=None):
