@@ -4,6 +4,16 @@ Medical Agent 是一个本地网页版智能问诊 Agent 原型。它不是医�
 
 当前默认使用 Flask 提供网页界面，Agent 编排默认走 LangGraph；没有配置模型 API 时也可以使用 Mock 演示模式体验流程。
 
+## 对话示例
+
+以一次真实 DeepSeek 模型下的风寒感冒问诊为例（5 轮收敛）：
+
+左侧为问诊对话（摘录：开场主诉与追问、最终建议，中间追问轮省略），右侧为运行状态栏（已识别症状、缺失字段、风险等级、LLM 调用指标与执行轨迹实时展示）。最终建议末尾附 RAG 检索注入的「知识库参考」段（参考方剂 + 知识库版本行）与安全边界说明：
+
+| 问诊对话 | 运行状态 |
+| --- | --- |
+| ![问诊对话](docs/images/demo_chat_panel.png) | ![运行状态](docs/images/demo_status_panel.png) |
+
 ## 快速开始
 
 ### Windows 一键安装
@@ -191,6 +201,7 @@ mcp_servers/           仓库内 MCP 试点服务（hospital_locator 附近医�
 mcp_servers.json       MCP 服务接入配置（stdio，可选 call_timeout）
 observability/         日志、JSONL 事件流与指标汇总
 evaluation/            评测集：多轮对话剧本、回放评测、检索对比与真实 LLM 冒烟
+docs/                  架构与指南文档、对话示例截图
 test_system.py         系统检查脚本
 ```
 
