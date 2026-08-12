@@ -958,6 +958,7 @@ def test_planner_review_interceptions():
 # 评测集 smoke：回放一个带标注用例走真实图链路，防止评测基线回归
 def test_evaluation_case_smoke():
     from evaluation.run_eval import evaluate_case, load_cases
+    from evaluation.run_eval import main as eval_main
 
     cases = load_cases(case_filter="01_high_risk_chest_pain")
     if not cases:
@@ -965,9 +966,12 @@ def test_evaluation_case_smoke():
         return False
 
     result = evaluate_case(cases[0])
+    # B4：--provider 参数解析并透传（默认 mock 行为不变）
+    provider_arg_ok = eval_main(["--case", "01_high_risk_chest_pain", "--provider", "mock"]) == 0
     checks = [
         ("case loaded", result["id"] == "01_high_risk_chest_pain"),
         ("case passes all assertions", result["pass"]),
+        ("eval provider argument parsed and runs", provider_arg_ok),
     ]
 
     passed = True

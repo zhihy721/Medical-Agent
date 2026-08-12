@@ -5,9 +5,10 @@
 （默认 mock provider，保证离线与确定性），逐轮对比断言并输出指标。
 
 用法：
-    python evaluation/run_eval.py            # 跑全部用例
+    python evaluation/run_eval.py            # 跑全部用例（mock，确定性基线）
     python evaluation/run_eval.py --case 01_high_risk_chest_pain
     python evaluation/run_eval.py --verbose  # 打印每轮详细信息
+    python evaluation/run_eval.py --provider deepseek  # 真实 LLM 手动模式（非确定，仅供参考）
 
 用例 JSON 结构：
     {
@@ -69,16 +70,16 @@ def load_cases(case_filter=None):
     return cases
 
 
-def build_agent(case_id):
-    """为单个用例构建隔离的 agent：mock provider + 内存版记忆。"""
-    llm = LLM(system_prompt=SYSTEM_PROMPT, provider="mock")
+def build_agent(case_id, provider="mock"):
+    """为单个用例构建隔离的 agent：默认 mock 保证确定性；provider 可透传真实后端。"""
+    llm = LLM(system_prompt=SYSTEM_PROMPT, provider=provider)
     memory = ConversationMemory(session_id=f"eval-{case_id}", user_id="eval-user")
     return create_agent(llm, memory, runtime="langgraph")
 
 
-def run_case(case):
+def run_case(case, provider="mock"):
     """回放一个用例的所有轮次，返回 (逐轮记录列表, 运行错误)。"""
-    agent = build_agent(case["id"])
+    agent = build_agent(case["id"], provider=provider)
     records = []
     error = ""
     try:
@@ -168,9 +169,9 @@ def check_turn(expect, record):
     return failures, flag_tp, flag_fp, flag_fn
 
 
-def evaluate_case(case, verbose=False):
+def evaluate_case(case, verbose=False, provider="mock"):
     """执行并评估一个用例，返回结果 dict。"""
-    records, error = run_case(case)
+    records, error = run_case(case, provider=provider)
     turns = case.get("turns", [])
     turn_results = []
     all_failures = []
@@ -338,15 +339,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Medical-Agent 系统化评测集")
     parser.add_argument("--case", help="只运行指定 id 的用例")
     parser.add_argument("--verbose", action="store_true", help="打印每轮详细结果")
+    parser.add_argument(
+        "--provider",
+        default="mock",
+        help="LLM provider（默认 mock 保证确定性；真实后端输出非确定，失败仅供参考）",
+    )
     parser.add_argument("--report", metavar="PATH", help="将评测报告 JSON 落盘到指定路径")
     args = parser.parse_args(argv)
+
+    if args.provider != "mock":
+        print(f"[提示] 使用真实 provider={args.provider}：输出非确定，失败仅供参考，不计入 CI 基线")
 
     cases = load_cases(args.case)
     if not cases:
         print(f"未找到用例（--case {args.case}），请检查 evaluation/cases/")
         return 1
 
-    results = [evaluate_case(case, verbose=args.verbose) for case in cases]
+    results = [evaluate_case(case, verbose=args.verbose, provider=args.provider) for case in cases]
     print_report(results, verbose=args.verbose)
 
     if args.report:
