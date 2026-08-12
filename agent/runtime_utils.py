@@ -454,6 +454,9 @@ def render_response(llm, memory, action_result, case_state, risk_result, guideli
     conversation_context = memory.get_prompt_context_text()
     profile_context = memory.get_profile_context_text()
     if llm.last_provider_used in {"deepseek", "openai"}:
+        # 脉诊请求直出确定性文案：LLM 重写实测会把脉诊请求改写成雷同追问，语义丢失
+        if action_result.name == "request_pulse_input":
+            return action_result.response
         if action_result.render_mode == "followup":
             prompt = FOLLOWUP_PROMPT.format(
                 case_state=json.dumps(case_state, ensure_ascii=False),

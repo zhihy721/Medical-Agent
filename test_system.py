@@ -143,7 +143,7 @@ def test_followup_strategy():
     checks = [
         ("collecting info status recorded", case_state["status"] == "COLLECTING_INFO"),
         ("followup remembers missing slots", len(case_state["missing_slots"]) >= 1),
-        ("response asks for more detail", any(keyword in response for keyword in ("补充", "持续", "严重程度", "部位", "多久", "多久了", "多重", "程度"))),
+        ("response asks for more detail", any(keyword in response for keyword in ("补充", "持续", "严重程度", "部位", "多久", "多久了", "多重", "程度", "严重", "怎么个不舒服法", "怎么个不舒服"))),
     ]
 
     passed = True
@@ -1165,6 +1165,29 @@ def test_corpus_knowledge_and_retrieval():
     )
     empty_context_ok = bool(bare_llm.prompts) and "knowledge_context:\n无" in bare_llm.prompts[0]
 
+    # A1：脉诊请求直出固定文案，不走 LLM 重写（实测重写会改写成雷同追问，语义丢失）
+    pulse_action = ActionResult(
+        name="request_pulse_input",
+        response="脉诊请求固定文案",
+        status="WAITING_PULSE_INPUT",
+        is_final=False,
+        missing_slots=[],
+        render_mode="followup",
+    )
+    pulse_llm = _RecordingLLM("deepseek")
+    pulse_rendered = render_response(
+        pulse_llm, _SimpleMemory(), pulse_action,
+        case_with_syndrome, {"risk": "LOW"}, {"summary": "测试建议"}, plan_with_syndrome,
+    )
+    pulse_direct_ok = pulse_rendered == "脉诊请求固定文案" and not pulse_llm.prompts
+
+    # A2：最终回复 prompt 要求原样保留知识库参考段，避免 LLM 重写抹掉出处与版本信息
+    citation_kept_clause_ok = (
+        bool(deepseek_llm.prompts)
+        and "知识库参考" in deepseek_llm.prompts[0]
+        and "原样保留" in deepseek_llm.prompts[0]
+    )
+
     # R3：TF-IDF 对比后端——与 BM25 同金标准的确定性排名，命中结构一致（含 content）
     from knowledge.retriever import TFIDFRetriever
 
@@ -1211,6 +1234,8 @@ def test_corpus_knowledge_and_retrieval():
         ("real provider prompt carries knowledge context", prompt_context_ok),
         ("mock provider returns draft without llm call", mock_path_ok),
         ("empty retrieval passes placeholder context", empty_context_ok),
+        ("pulse request skips llm rewrite", pulse_direct_ok),
+        ("final prompt keeps knowledge citation clause", citation_kept_clause_ok),
         ("tfidf backend ranks gold queries deterministically", tfidf_ok),
         ("compare script rank statistics correct", stats_ok),
     ]

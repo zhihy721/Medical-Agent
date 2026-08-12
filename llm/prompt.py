@@ -82,6 +82,7 @@ FINAL_RESPONSE_PROMPT = """
 8. 可以参考 action_draft 的结构，但用更自然的话重新组织。
 9. 如果有 profile_context，把它视为长期背景信息，可用于补充既往史和用户画像，但不要和本次急性症状混淆。
 10. knowledge_context 是知识库检索参考资料：可以引用其内容，但须忠实转述、不得超出其范围杜撰；若为“无”则忽略。
+11. 如果 action_draft 中包含“知识库参考”段落，须在回复结尾原样保留其内容与出处（含知识库版本行），不得改写或省略。
 
 case_state:
 {case_state}

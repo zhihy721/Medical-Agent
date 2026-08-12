@@ -112,8 +112,9 @@ def main():
     print(f"语料线索命中（R2 观测）: {hints_hit if hints_hit else '无'}")
     print(f"安全边界行保留: {'是' if SAFETY_LINE in final_response else '否'}")
     # 截断粗判：final 回复过短或去掉 Markdown 收尾符（如斜体 *）后仍无结束标点，提示检查 DEEPSEEK_MAX_TOKENS
+    # 出处段以知识库版本行（如 ...faq=1.0.0）结尾时数字收尾属正常，一并放行
     tail = final_response.rstrip("*- \n")
-    looks_truncated = len(final_response) < 60 or not tail or tail[-1] not in "。！？…」）"
+    looks_truncated = len(final_response) < 60 or not tail or tail[-1] not in "。！？…」）0123456789"
     print(f"疑似截断: {'是（建议调大 DEEPSEEK_MAX_TOKENS，如 1024）' if looks_truncated else '否'}")
     print(f"回复长度: {len(final_response)} 字符")
     print("-" * 60)
