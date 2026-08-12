@@ -265,14 +265,31 @@ def _nearby_hospital_lines(case_state):
     result = tool(location=location)
     if result.get("status") != "ok":
         return []
-    hospitals = (result.get("data") or {}).get("hospitals") or []
+    data = result.get("data") or {}
+    hospitals = data.get("hospitals") or []
     if not hospitals:
         return []
-    lines = [f"如你就近位于{location}，以下医院可前往（演示数据，以实际导航为准）："]
+    lines = [f"如你就近位于{location}，以下医院可前往："]
     for item in hospitals[:3]:
-        emergency = "，有急诊" if item.get("has_emergency") else ""
-        lines.append(f"- {item.get('name', '')}（{item.get('district', '')}，约 {item.get('distance_km', '?')} 公里{emergency}）")
+        detail = (item.get("district") or "").strip()
+        if item.get("distance_km") is not None:
+            detail += f"，约 {item['distance_km']} 公里"
+        if item.get("has_emergency"):
+            detail += "，有急诊"
+        lines.append(f"- {item.get('name', '')}（{detail}）" if detail else f"- {item.get('name', '')}")
+    # 数据来源说明由工具 note 提供（演示/高德/回退各不同），不硬编码
+    note = (data.get("note") or "").strip()
+    if note:
+        lines.append(f"（{note}）")
     return lines
+
+
+# 安全关键兜底：LLM 重写若丢掉就近医院清单，机械补回（与知识库出处段同类问题）
+def _ensure_hospital_lines(response, draft):
+    marker = "如你就近位于"
+    if marker not in draft or marker in response:
+        return response
+    return f"{response}\n\n{draft[draft.index(marker):].strip()}"
 
 
 # 正常结束路径的结果构建
@@ -484,6 +501,6 @@ def render_response(llm, memory, action_result, case_state, risk_result, guideli
             )
             response = llm.call(prompt).strip()
             if response and response != "{}":
-                return response
+                return _ensure_hospital_lines(response, action_result.response)
 
     return action_result.response

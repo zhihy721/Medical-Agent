@@ -1493,10 +1493,15 @@ def test_mcp_end_to_end_hospital_locator():
 
         tool = default_registry.get("hospital_locator_search_nearby_hospitals")
         result = tool(location="北京", department="急诊") if tool else {"status": "error"}
+        # 数据源无关断言：配置高德 key 时走真实 POI（无 distance_km/科室信息），未配置走演示数据
+        result_note = (result.get("data") or {}).get("note", "")
+        is_amap = "高德" in result_note
+        result_hospitals = (result.get("data") or {}).get("hospitals", [])
         data_ok = (
             result.get("status") == "ok"
             and result["data"].get("count", 0) >= 2
-            and all(h.get("name") and "distance_km" in h for h in result["data"].get("hospitals", []))
+            and all(h.get("name") for h in result_hospitals)
+            and (is_amap or all("distance_km" in h for h in result_hospitals))
         )
         unknown = tool(location="不存在的城市") if tool else {"data": {}}
         unknown_ok = unknown.get("status") == "ok" and unknown["data"].get("count", 0) == 0
@@ -1516,9 +1521,13 @@ def test_mcp_end_to_end_hospital_locator():
             and after_reconnect.get("connected") is True
         )
 
-        # 科室过滤无匹配时返回空列表（不静默回退全部）
+        # 科室过滤无匹配时返回空列表（演示源）；高德源无科室信息不过滤、返回非空
         no_dept = tool(location="北京", department="儿科") if tool else {"data": {}}
-        dept_mismatch_ok = no_dept.get("status") == "ok" and no_dept["data"].get("count", 0) == 0
+        no_dept_note = (no_dept.get("data") or {}).get("note", "")
+        dept_mismatch_ok = no_dept.get("status") == "ok" and (
+            ("高德" in no_dept_note and no_dept["data"].get("count", 0) >= 1)
+            or no_dept["data"].get("count", 0) == 0
+        )
 
         # HIGH 升级回复：配置位置后附加医院清单；未配置时不附加（保持既有回复形态）
         bare = build_risk_escalation_action_result(
@@ -1537,7 +1546,7 @@ def test_mcp_end_to_end_hospital_locator():
         hospital_lines_ok = (
             "医院可前往" not in bare.response
             and "医院可前往" in enriched.response
-            and "北京协和医院" in enriched.response
+            and ("高德" in enriched.response or "演示数据" in enriched.response)
         )
 
         # city 槽位优先级链：会话抽取的城市优先于 env；无位置来源时不附加
@@ -1688,6 +1697,7 @@ def test_city_slot_extraction_and_merge():
 
     with_city = extract_symptoms("我在上海，这两天咳嗽怕冷，有点发热")
     without_city = extract_symptoms("这两天咳嗽怕冷，有点发热")
+    hangzhou_city = extract_symptoms("我在杭州，突然胸口闷疼")
 
     memory = ConversationMemory()
     memory.update_case(with_city)
@@ -1697,6 +1707,7 @@ def test_city_slot_extraction_and_merge():
 
     checks = [
         ("city extracted from free text", with_city["city"] == "上海"),
+        ("expanded city vocab covers hangzhou", hangzhou_city["city"] == "杭州"),
         ("text without city yields empty slot", without_city["city"] == ""),
         ("city merged into case_state", first_city == "上海"),
         ("latest city statement overwrites previous", state["city"] == "北京"),
@@ -1974,6 +1985,61 @@ def test_config_validation_friendly_errors():
     return passed
 
 
+# 测试配置序列化保留手填可选键：配置页保存不得清掉 AMAP_API_KEY 等（防数据源静默降级）
+def test_config_save_preserves_manual_extra_keys():
+    from config_manager import DEFAULT_CONFIG, _serialize_config
+
+    config = dict(DEFAULT_CONFIG)
+    config["AMAP_API_KEY"] = "k" * 32
+    config["HOSPITAL_DATA_URL"] = "http://example.invalid/hospitals.json"
+    text = _serialize_config(config)
+
+    checks = [
+        ("serialize keeps amap key", f"AMAP_API_KEY={'k' * 32}" in text),
+        ("serialize keeps hospital url", "HOSPITAL_DATA_URL=http://example.invalid/hospitals.json" in text),
+        ("serialize keeps default keys", "LLM_PROVIDER=" in text),
+        ("serialize drops blank extras", "EMPTY_KEY" not in _serialize_config({**DEFAULT_CONFIG, "EMPTY_KEY": "  "})),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
+# 测试医院清单的 LLM 重写兜底：重写丢失时机械补回，已含或草稿无清单时原样返回
+def test_hospital_lines_rewrite_fallback():
+    from agent.runtime_utils import _ensure_hospital_lines
+
+    draft = (
+        "分诊建议正文。\n"
+        "如你就近位于上海，以下医院可前往：\n"
+        "- 复旦大学附属华山医院（静安区）\n"
+        "（数据来自高德地图 POI，就医请以实际导航与医院公告为准）"
+    )
+    restored = _ensure_hospital_lines("改写后丢了医院清单的回复", draft)
+    untouched = _ensure_hospital_lines("回复里已含如你就近位于段落", draft)
+
+    checks = [
+        ("hospital fallback restores dropped list", "复旦大学附属华山医院" in restored and restored.endswith("医院公告为准）")),
+        ("hospital fallback no-op when present", untouched == "回复里已含如你就近位于段落"),
+        ("hospital fallback no-op without draft list", _ensure_hospital_lines("任意回复", "无医院段的草稿") == "任意回复"),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
 def main():
     results = [
         test_default_runtime_prefers_langgraph(),
@@ -2019,6 +2085,8 @@ def main():
         test_corpus_knowledge_and_retrieval(),
         test_mcp_config_and_adapter_degradation(),
         test_mcp_end_to_end_hospital_locator(),
+        test_hospital_lines_rewrite_fallback(),
+        test_config_save_preserves_manual_extra_keys(),
     ]
     passed = sum(results)
     total = len(results)

@@ -127,7 +127,7 @@ def search_nearby_hospitals(location: str, department: str = "") -> str:
         "amap_fallback": "高德地图服务不可用，已回退演示数据，就医请以实际导航为准",
     }
     note = notes[source]
-    if department:
+    if department and any(item["departments"] for item in matched):
         filtered = [item for item in matched if department in item["departments"]]
         if matched and not filtered:
             # 指定科室无匹配时返回空列表并说明，不静默回退全部（避免误导）
@@ -135,6 +135,7 @@ def search_nearby_hospitals(location: str, department: str = "") -> str:
             note = f"{city or '该位置'}暂未收录带{department}的医院（演示数据）"
         else:
             matched = filtered
+    # 无科室信息的数据源（高德 POI）不做科室过滤：返回空会误导用户以为无医院
     payload = {
         "location": city,
         "count": len(matched),

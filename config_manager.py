@@ -143,4 +143,16 @@ def _serialize_config(config):
     ]
     for key in DEFAULT_CONFIG:
         lines.append(f"{key}={config.get(key, '')}")
+    # 手填可选键（AMAP_API_KEY/HOSPITAL_DATA_URL 等）不在配置页管理范围，
+    # 但序列化须原样保留，否则配置页保存会清掉它们导致数据源静默降级
+    extras = {
+        key: value
+        for key, value in config.items()
+        if key not in DEFAULT_CONFIG and str(value).strip()
+    }
+    if extras:
+        lines.append("")
+        lines.append("# Optional manual keys (not managed by the web setup page, preserved as-is)")
+        for key, value in extras.items():
+            lines.append(f"{key}={value}")
     return "\n".join(lines) + "\n"
