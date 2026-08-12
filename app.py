@@ -254,12 +254,23 @@ def chat():
     if not user_input:
         return jsonify({"response": "请输入有效的症状描述或问题。"})
 
+    # 浏览器定位坐标（可选）：前端授权后随消息附带，仅用于就近医院检索；
+    # 非法值静默丢弃，回退城市文本链路
+    user_coords = None
+    try:
+        latitude = float(payload.get("latitude"))
+        longitude = float(payload.get("longitude"))
+        if -90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0:
+            user_coords = {"latitude": latitude, "longitude": longitude}
+    except (TypeError, ValueError):
+        pass
+
     try:
         entry = _get_agent()
         agent = entry["agent"]
         # 同一会话串行化：避免并发请求互相覆盖 case_state 与会话文件
         with entry["lock"]:
-            response = agent.run(user_input)
+            response = agent.run(user_input, user_coords=user_coords)
             snapshot = agent.get_case_snapshot()
         return jsonify(
             {

@@ -1631,6 +1631,113 @@ def test_mcp_end_to_end_hospital_locator():
             os.environ.pop("AMAP_API_KEY", None)
             os.environ.pop("HOSPITAL_DATA_URL", None)
         url_priority_ok = "外部数据源不可用" in url_priority_payload.get("note", "")
+
+        # 周边搜索（坐标模式）：距离换算、10km 空自动扩 20km 取最近 5 家、失败无城市诚实返空、升级链路坐标渲染
+        import mcp_servers.hospital_locator as hl
+        from mcp_servers.hospital_locator import _parse_amap_around_pois
+
+        around_entries = _parse_amap_around_pois({
+            "status": "1",
+            "pois": [
+                {"name": "就近人民医院", "adname": "示例区", "distance": "1234"},
+                {"name": "无距离人民医院", "adname": "示例区", "distance": ""},
+            ],
+        })
+        around_parse_ok = (
+            len(around_entries) == 2
+            and around_entries[0]["distance_km"] == 1.2
+            and "distance_km" not in around_entries[1]
+            and "distance_raw" not in around_entries[0]
+        )
+
+        original_around = hl._search_amap_around
+        around_calls = []
+
+        def fake_around_empty_then_hit(latitude, longitude, api_key, radius_meters):
+            around_calls.append(radius_meters)
+            if radius_meters == hl.AMAP_NEARBY_RADIUS_METERS:
+                return []
+            return [
+                {"name": f"就近医院{i}", "district": "示例区", "departments": [], "has_emergency": False, "distance_km": 11.0 + i}
+                for i in range(7)
+            ]
+
+        os.environ["AMAP_API_KEY"] = "fake-key"
+        os.environ.pop("HOSPITAL_DATA_URL", None)
+        hl._search_amap_around = fake_around_empty_then_hit
+        try:
+            nearby_expanded = json.loads(raw_search(location="", latitude=31.23, longitude=121.47))
+        finally:
+            hl._search_amap_around = original_around
+        nearby_expand_ok = (
+            around_calls == [hl.AMAP_NEARBY_RADIUS_METERS, hl.AMAP_NEARBY_RADIUS_EXPANDED_METERS]
+            and nearby_expanded.get("source") == "amap_nearby"
+            and nearby_expanded.get("radius_km") == 20
+            and nearby_expanded.get("count") == 5
+            and "已扩大至 20km" in nearby_expanded.get("note", "")
+        )
+
+        around_calls.clear()
+        hl._search_amap_around = lambda latitude, longitude, api_key, radius_meters: (
+            around_calls.append(radius_meters)
+            or [{"name": "就近医院", "district": "示例区", "departments": [], "has_emergency": False, "distance_km": 0.8}]
+        )
+        try:
+            nearby_hit = json.loads(raw_search(location="", latitude=31.23, longitude=121.47))
+        finally:
+            hl._search_amap_around = original_around
+        nearby_hit_ok = (
+            around_calls == [hl.AMAP_NEARBY_RADIUS_METERS]
+            and nearby_hit.get("radius_km") == 10
+            and "已扩大" not in nearby_hit.get("note", "")
+        )
+
+        # 坐标检索不可用且无城市可回退：诚实返回空，不用无关城市演示数据冒充就近
+        os.environ["AMAP_BASE_URL"] = "http://127.0.0.1:9"
+        try:
+            coords_fail = json.loads(raw_search(location="", latitude=31.23, longitude=121.47))
+        finally:
+            os.environ.pop("AMAP_BASE_URL", None)
+            os.environ.pop("AMAP_API_KEY", None)
+        coords_fail_ok = (
+            coords_fail.get("count", 0) == 0
+            and "周边检索不可用" in coords_fail.get("note", "")
+        )
+
+        # 升级链路坐标模式渲染：抬头带半径说明、取最近 5 家，且与城市模式共用兜底标记前缀
+        from agent.runtime_utils import _nearby_hospital_lines
+        from tools.registry import default_registry
+
+        def fake_nearby_tool(**kwargs):
+            if kwargs.get("latitude") and kwargs.get("longitude"):
+                return {
+                    "status": "ok",
+                    "data": {
+                        "hospitals": [
+                            {"name": f"就近医院{i}", "district": "示例区", "distance_km": round(0.5 * (i + 1), 1)}
+                            for i in range(6)
+                        ],
+                        "source": "amap_nearby",
+                        "radius_km": 10,
+                        "note": "数据来自高德地图 POI（周边检索，按直线距离排序），就医请以实际导航与医院公告为准",
+                    },
+                }
+            return {"status": "ok", "data": {"hospitals": [], "source": "demo", "note": ""}}
+
+        original_registry_get = default_registry.get
+        default_registry.get = lambda name: (
+            fake_nearby_tool if name == "hospital_locator_search_nearby_hospitals" else original_registry_get(name)
+        )
+        try:
+            coords_lines = _nearby_hospital_lines({"user_coords": {"latitude": 31.23, "longitude": 121.47}})
+        finally:
+            default_registry.get = original_registry_get
+        coords_render_ok = (
+            len(coords_lines) >= 7
+            and coords_lines[0].startswith("如你就近位于当前位置，10km 内以下医院可前往")
+            and sum(1 for line in coords_lines if line.startswith("- ")) == 5
+            and "约 0.5 公里" in coords_lines[1]
+        )
     finally:
         os.environ.pop("MEDICAL_AGENT_LOCATION", None)
         os.environ.pop("HOSPITAL_DATA_URL", None)
@@ -1652,6 +1759,11 @@ def test_mcp_end_to_end_hospital_locator():
         ("amap poi payload parses into honest entries", amap_parse_ok),
         ("amap unreachable falls back to demo with note", amap_fallback_ok),
         ("static url takes priority over amap source", url_priority_ok),
+        ("amap around payload converts distance meters to km", around_parse_ok),
+        ("nearby search expands radius to 20km when 10km empty", nearby_expand_ok),
+        ("nearby search keeps 10km and returns closest five when hit", nearby_hit_ok),
+        ("nearby search failure without city returns honest empty", coords_fail_ok),
+        ("escalation renders coords mode header with five hospitals", coords_render_ok),
     ]
 
     passed = True
@@ -1704,6 +1816,8 @@ def test_city_slot_extraction_and_merge():
     first_city = memory.get_case_state().get("city")
     memory.update_case({"city": "北京"})
     state = memory.get_case_state()
+    memory.update_user_coords(31.23, 121.47)
+    coords_state = memory.get_case_state()
 
     checks = [
         ("city extracted from free text", with_city["city"] == "上海"),
@@ -1712,6 +1826,7 @@ def test_city_slot_extraction_and_merge():
         ("city merged into case_state", first_city == "上海"),
         ("latest city statement overwrites previous", state["city"] == "北京"),
         ("city stays out of triage slot labels", "city" not in TCM_SLOT_LABELS),
+        ("browser coords stored in session case state", coords_state.get("user_coords") == {"latitude": 31.23, "longitude": 121.47}),
     ]
 
     passed = True

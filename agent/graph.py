@@ -434,7 +434,9 @@ class LangGraphMedicalAgent:
     def _invoke_config(self):
         return {"configurable": {"thread_id": self.thread_id}}
 
-    def run(self, user_input):
+    def run(self, user_input, user_coords=None):
+        if user_coords:
+            self.memory.update_user_coords(user_coords["latitude"], user_coords["longitude"])
         # 每轮生成 turn_id，串联本次提问的全链路事件
         turn_id = uuid.uuid4().hex[:12]
         session_id = getattr(self.memory, "session_id", "") or self.thread_id

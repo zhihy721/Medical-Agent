@@ -250,27 +250,46 @@ def build_risk_escalation_action_result(case_state, risk_result, guideline_resul
     )
 
 # 高风险升级回复的附近医院建议：仅当 hospital_locator MCP 工具已注册且有位置来源时附加
-# 位置优先级：会话中抽取的城市（city 槽位） > MEDICAL_AGENT_LOCATION 环境变量（手动覆盖）
+# 位置优先级：浏览器定位坐标（user_coords，工具侧需高德 key） > 会话抽取的城市（city 槽位）
+#            > MEDICAL_AGENT_LOCATION 环境变量（手动覆盖）
 def _nearby_hospital_lines(case_state):
     import os
 
     from tools.registry import default_registry
 
-    location = (case_state.get("city") or "").strip() or os.getenv("MEDICAL_AGENT_LOCATION", "").strip()
-    if not location:
-        return []
     tool = default_registry.get("hospital_locator_search_nearby_hospitals")
     if tool is None:
         return []
-    result = tool(location=location)
+    city = (case_state.get("city") or "").strip() or os.getenv("MEDICAL_AGENT_LOCATION", "").strip()
+    kwargs = {"location": city}
+    coords = case_state.get("user_coords") or {}
+    try:
+        latitude = float(coords.get("latitude") or 0)
+        longitude = float(coords.get("longitude") or 0)
+        if latitude and longitude:
+            kwargs.update(latitude=latitude, longitude=longitude)
+    except (TypeError, ValueError):
+        pass
+    if not city and "latitude" not in kwargs:
+        return []
+    result = tool(**kwargs)
     if result.get("status") != "ok":
         return []
     data = result.get("data") or {}
     hospitals = data.get("hospitals") or []
     if not hospitals:
         return []
-    lines = [f"如你就近位于{location}，以下医院可前往："]
-    for item in hospitals[:3]:
+    # 坐标模式（高德周边检索）：抬头带半径与排序说明，展示全部返回项（至多 5 家）；
+    # 城市/演示模式：维持既有抬头与 3 家上限。两种抬头均以“如你就近位于”开头，
+    # 保证 _ensure_hospital_lines 兜底标记与 prompt 医院清单条款继续生效
+    if data.get("source") == "amap_nearby":
+        radius_km = data.get("radius_km") or 10
+        lines = [f"如你就近位于当前位置，{radius_km}km 内以下医院可前往（按直线距离由近到远）："]
+        limit = 5
+    else:
+        lines = [f"如你就近位于{city}，以下医院可前往："]
+        limit = 3
+    for item in hospitals[:limit]:
         detail = (item.get("district") or "").strip()
         if item.get("distance_km") is not None:
             detail += f"，约 {item['distance_km']} 公里"

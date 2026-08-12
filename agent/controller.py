@@ -50,7 +50,9 @@ class MedicalAgent:
         self.router = Router()
         self.planner = Planner()
 
-    def run(self, user_input):
+    def run(self, user_input, user_coords=None):
+        if user_coords:
+            self.memory.update_user_coords(user_coords["latitude"], user_coords["longitude"])
         self.memory.add_user(user_input)
         handle_post_pulse_reply(self.memory, user_input)
 

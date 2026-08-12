@@ -117,6 +117,7 @@ class ConversationMemory:
             "severity": "",
             "location": "",
             "city": "",
+            "user_coords": None,
             "age": "",
             "sex": "",
             "past_history": [],
@@ -210,6 +211,12 @@ class ConversationMemory:
         self.case_state["summary"] = self._build_summary()
         self.case_state["tcm_summary"] = self._build_tcm_summary()
         self._refresh_conversation_memory()
+        self._persist_session_state()
+
+    # 更新浏览器定位坐标：仅存会话状态供就近医院检索用，
+    # 不进槽位历史/矛盾检测，也不写入长期画像
+    def update_user_coords(self, latitude, longitude):
+        self.case_state["user_coords"] = {"latitude": latitude, "longitude": longitude}
         self._persist_session_state()
 
     # 专门处理脉搏数据的输入

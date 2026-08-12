@@ -522,6 +522,7 @@
                 <div class="side-header">
                     <h2>运行状态</h2>
                     <p id="runtime-summary">等待状态更新</p>
+                    <p id="geo-status">定位：未获取</p>
                 </div>
                 <div class="state-list">
                     <div class="state-block">
@@ -868,6 +869,48 @@
             }
         }
 
+        // 浏览器定位：页面加载时请求一次授权并缓存坐标，随消息带给后端，
+        // 用于高风险升级时按真实位置检索就近医院。仅安全上下文可用
+        // （http://localhost 可以，局域网 IP 的 http 不行）；拒绝或不可用时
+        // 静默回退城市名查询，不弹窗打扰。
+        let userCoords = null;
+        let geoPending = false;
+
+        function requestGeolocation() {
+            const geoStatus = document.getElementById("geo-status");
+            if (!("geolocation" in navigator)) {
+                geoStatus.textContent = "定位：当前环境不可用，将按城市查询";
+                return;
+            }
+            geoPending = true;
+            geoStatus.textContent = "定位：获取中…";
+            navigator.geolocation.getCurrentPosition(
+                position => {
+                    geoPending = false;
+                    userCoords = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude
+                    };
+                    geoStatus.textContent = "定位：已获取（用于就近医院推荐）";
+                },
+                error => {
+                    geoPending = false;
+                    userCoords = null;
+                    const reasons = {
+                        1: "未授权",
+                        2: "位置不可用（检查系统定位服务/网络）",
+                        3: "超时"
+                    };
+                    geoStatus.textContent = `定位：失败（${reasons[error.code] || "未知原因"}），将按城市查询`;
+                },
+                { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 }
+            );
+        }
+
+        function initUserGeolocation() {
+            requestGeolocation();
+        }
+
         async function sendMessage(prefilledText = null) {
             const message = (prefilledText ?? messageInput.value).trim();
             if (!message) {
@@ -878,11 +921,18 @@
             messageInput.value = "";
             sendBtn.disabled = true;
 
+            // 定位未拿到坐标时懒重试：页面加载那次可能超时/位置暂不可用，
+            // 用户已授权的话这里通常能立即拿到；仍失败则按城市查询
+            if (!userCoords && !geoPending) {
+                requestGeolocation();
+            }
+
             try {
+                const payload = userCoords ? { message, ...userCoords } : { message };
                 const response = await fetch("/chat", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ message })
+                    body: JSON.stringify(payload)
                 });
                 const data = await response.json();
                 addMessage(data.response || "系统没有返回内容。", "bot");
@@ -947,6 +997,7 @@
         providerInput.addEventListener("change", updateProviderFields);
 
         loadConfigStatus();
+        initUserGeolocation();
     </script>
 </body>
 </html>
