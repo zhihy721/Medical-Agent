@@ -1192,6 +1192,18 @@ def test_corpus_knowledge_and_retrieval():
         and "原样保留" in deepseek_llm.prompts[0]
     )
 
+    # C5：扩充语料可被加载且确定性命中（方剂 24/调护 20/FAQ 14 = 58 条）
+    from knowledge.tcm_knowledge import get_corpus
+
+    corpus_entries = get_corpus()
+    new_formula_top = search_knowledge("小柴胡汤", top_k=1)["hits"]
+    new_faq_top = search_knowledge("中药应该怎么煎服", top_k=1)["hits"]
+    corpus_expansion_ok = (
+        len(corpus_entries) == 58
+        and bool(new_formula_top) and new_formula_top[0]["id"] == "f_xiao_chaihu_tang"
+        and bool(new_faq_top) and new_faq_top[0]["id"] == "faq_how_to_decoct"
+    )
+
     # R3：TF-IDF 对比后端——与 BM25 同金标准的确定性排名，命中结构一致（含 content）
     from knowledge.retriever import TFIDFRetriever
 
@@ -1240,6 +1252,7 @@ def test_corpus_knowledge_and_retrieval():
         ("empty retrieval passes placeholder context", empty_context_ok),
         ("pulse request skips llm rewrite", pulse_direct_ok),
         ("final prompt keeps knowledge citation clause", citation_kept_clause_ok),
+        ("corpus expansion loads and retrieves deterministically", corpus_expansion_ok),
         ("tfidf backend ranks gold queries deterministically", tfidf_ok),
         ("compare script rank statistics correct", stats_ok),
     ]
