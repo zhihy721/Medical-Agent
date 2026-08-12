@@ -1455,6 +1455,7 @@ def test_mcp_config_and_adapter_degradation():
 
 # 测试 MCP 端到端：真实启动仓库内 mock 地图服务，调用返回结构正确，HIGH 升级回复可附加医院清单
 def test_mcp_end_to_end_hospital_locator():
+    import json
     import os
 
     from agent.runtime_utils import build_risk_escalation_action_result
@@ -1538,8 +1539,26 @@ def test_mcp_end_to_end_hospital_locator():
             "就近位于上海" in city_driven.response
             and "就近位于广州" in city_over_env.response
         )
+
+        # C6：医院数据源外置——未配置远端走演示数据；配置了不可达远端时回退演示数据并在 note 标注
+        from mcp_servers.hospital_locator import _load_hospitals
+        from mcp_servers.hospital_locator import search_nearby_hospitals as raw_search
+
+        demo_hospitals, demo_source = _load_hospitals()
+        os.environ["HOSPITAL_DATA_URL"] = "http://127.0.0.1:9/hospitals.json"
+        try:
+            fallback_payload = json.loads(raw_search("北京"))
+        finally:
+            os.environ.pop("HOSPITAL_DATA_URL", None)
+        data_source_switch_ok = (
+            demo_source == "demo"
+            and bool(demo_hospitals)
+            and fallback_payload.get("count", 0) > 0
+            and "已回退演示数据" in fallback_payload.get("note", "")
+        )
     finally:
         os.environ.pop("MEDICAL_AGENT_LOCATION", None)
+        os.environ.pop("HOSPITAL_DATA_URL", None)
         shutdown_mcp_servers()
 
     checks = [
@@ -1552,6 +1571,7 @@ def test_mcp_end_to_end_hospital_locator():
         ("dead session auto-reconnects and recovers", reconnect_ok),
         ("high-risk escalation appends hospitals only when configured", hospital_lines_ok),
         ("conversation city slot drives hospital list over env", city_slot_ok),
+        ("hospital data source falls back to demo when remote unreachable", data_source_switch_ok),
     ]
 
     passed = True

@@ -1,9 +1,15 @@
-# Mock 地图 MCP 服务：附近医院查询（stdio transport，纯演示数据，无外部 API）。
-# 作为 MCP 接入的试点服务，验证客户端桥接、工具适配与降级链路；
-# 后续接真实地图服务时，只需保持 search_nearby_hospitals 的返回结构即可无缝替换。
+# 地图 MCP 服务：附近医院查询（stdio transport）。
+# 数据层可切换：默认演示数据；配置 HOSPITAL_DATA_URL 后从该端点拉取同结构 JSON
+# （{"hospitals": {城市: [医院条目]}}），拉取失败自动回退演示数据并在 note 中标注。
+# MCP 工具签名与返回结构不变，接入真实地图服务只需替换数据层。
 import json
+import os
+import urllib.request
 
 from mcp.server.mcpserver import MCPServer
+
+# 远端数据源拉取超时：失败快速回退演示数据，不阻塞工具调用
+HTTP_TIMEOUT_SECONDS = 5.0
 
 # 演示数据：按城市/区组织，distance_km 为虚构距离
 _HOSPITALS = {
@@ -26,19 +32,45 @@ _HOSPITALS = {
 server = MCPServer("hospital_locator")
 
 
+def _load_hospitals():
+    """数据层：返回 (城市→医院列表映射, 来源标记)。
+
+    来源标记：demo（未配置远端）/ remote（远端拉取成功）/
+    demo_fallback（配置了远端但拉取失败，回退演示数据）。
+    """
+    url = os.getenv("HOSPITAL_DATA_URL", "").strip()
+    if not url:
+        return _HOSPITALS, "demo"
+    try:
+        with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        hospitals = data.get("hospitals") if isinstance(data, dict) else None
+        if not isinstance(hospitals, dict) or not hospitals:
+            raise ValueError("hospitals mapping missing")
+        return hospitals, "remote"
+    except Exception:
+        return _HOSPITALS, "demo_fallback"
+
+
 @server.tool(
     name="search_nearby_hospitals",
-    description="按城市查询附近可前往的医院（演示数据），可指定科室过滤；location 未收录时返回空列表",
+    description="按城市查询附近可前往的医院（默认演示数据，可配置 HOSPITAL_DATA_URL 外部数据源），可指定科室过滤；location 未收录时返回空列表",
 )
 def search_nearby_hospitals(location: str, department: str = "") -> str:
     """返回 JSON 文本：{location, count, hospitals:[{name, district, departments, has_emergency, distance_km}]}。"""
     city = (location or "").strip()
+    hospitals, source = _load_hospitals()
     matched = []
-    for key, items in _HOSPITALS.items():
+    for key, items in hospitals.items():
         if key in city or city in key:
             matched = items
             break
-    note = "演示数据，非真实地图信息，就医请以实际导航与医院公告为准"
+    notes = {
+        "demo": "演示数据，非真实地图信息，就医请以实际导航与医院公告为准",
+        "remote": "数据来自配置的外部数据源，就医请以实际导航与医院公告为准",
+        "demo_fallback": "外部数据源不可用，已回退演示数据，就医请以实际导航为准",
+    }
+    note = notes[source]
     if department:
         filtered = [item for item in matched if department in item["departments"]]
         if matched and not filtered:
