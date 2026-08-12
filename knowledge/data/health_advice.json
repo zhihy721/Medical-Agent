@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "养生调护语料：饮食/起居/情志/忌口四类，部分与 syndrome_rules.json 证型挂钩。content 为自包含文本段，可直接作为 RAG 检索单元。内容为演示级，需中医专业审核。",
   "advice": [
     {
@@ -310,6 +310,204 @@
         "恢复期",
         "劳逸结合"
       ]
+    },
+    {
+      "id": "ha_herb_ginger",
+      "title": "生姜的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "风寒束表"
+      ],
+      "content": "生姜能发汗解表、温中止呕，素有“呕家圣药”之称。风寒感冒初起可煮生姜红糖水趁热饮用，胃寒恶心者做菜时适量佐姜。阴虚内热、咽干口燥明显者不宜多用。症状持续或加重应及时就医，食疗不能替代诊疗。",
+      "tags": [
+        "生姜",
+        "风寒束表",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_jujube",
+      "title": "大枣的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "气血两虚"
+      ],
+      "content": "大枣能补中益气、养血安神，可煮粥、泡水或入汤膳，适合气血不足、神疲乏力者日常调养。大枣偏甜腻，腹胀、痰湿重、血糖偏高者不宜多食。食疗作用有限，明显不适请就医。",
+      "tags": [
+        "大枣",
+        "气血两虚",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_maltose",
+      "title": "饴糖的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "脾胃虚寒"
+      ],
+      "content": "饴糖（麦芽糖）能补中缓急、润肺止咳，脾胃虚寒、腹部隐痛喜温者可用温开水化开少量饮用。饴糖甜度高，糖尿病患者及痰湿内盛者不宜。食疗不能替代诊疗，症状持续请就医。",
+      "tags": [
+        "饴糖",
+        "脾胃虚寒",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_japonica_rice",
+      "title": "粳米的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "胃阴不足"
+      ],
+      "content": "粳米能和胃补中、除烦止渴，病后胃气未复、口干者宜煮稀粥频饮以养胃气。粥宜温热清淡，避免加过多糖油。若食欲长期不振或消瘦明显，应及时就医查明原因。",
+      "tags": [
+        "粳米",
+        "胃阴不足",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_wheat",
+      "title": "小麦的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "心脾两虚"
+      ],
+      "content": "小麦能养心气、除虚热，心脾两虚、心神不宁者可作主食或煮汤膳调养。经典方甘麦大枣汤即以小麦配甘草、大枣用于脏躁烦躁。失眠持续两周以上应就医，不宜仅靠食疗。",
+      "tags": [
+        "小麦",
+        "心脾两虚",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_lotus_seed",
+      "title": "莲子的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "心脾两虚"
+      ],
+      "content": "莲子能补脾止泻、养心安神，心脾两虚、睡眠不佳者可用莲子煮粥。大便干结者不宜多食莲子。若失眠、心悸持续不缓解，应及时就医评估。",
+      "tags": [
+        "莲子",
+        "心脾两虚",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_longan",
+      "title": "龙眼肉的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "心脾两虚",
+        "气血两虚"
+      ],
+      "content": "龙眼肉能益脾养血、宁心安神，思虑过度、心悸健忘、面色少华者可适量入粥或泡水。龙眼肉性偏温，痰火内盛、口干咽痛者不宜多食。食疗不能替代诊疗。",
+      "tags": [
+        "龙眼肉",
+        "心脾两虚",
+        "气血两虚",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_goji",
+      "title": "枸杞的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "阴虚内热",
+        "肾阳虚"
+      ],
+      "content": "枸杞能滋补肝肾、益精明目，头晕目涩、腰膝酸软者可泡水或入膳少量调养。感冒发热、腹泻期间宜暂缓。枸杞仅为食疗辅助，视物模糊加重应眼科就诊。",
+      "tags": [
+        "枸杞",
+        "阴虚内热",
+        "肾阳虚",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_lily",
+      "title": "百合的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "阴虚内热"
+      ],
+      "content": "百合能润肺宁心、清热除烦，阴虚内热、干咳少痰、虚烦失眠者可煮百合粥或羹。风寒咳嗽、痰白清稀者不宜。症状持续或加重应及时就医。",
+      "tags": [
+        "百合",
+        "阴虚内热",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_coix",
+      "title": "薏苡仁的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "湿阻中焦"
+      ],
+      "content": "薏苡仁能健脾渗湿、利水消肿，湿阻中焦、肢体困重、大便黏腻者可煮薏米粥调养。薏苡仁性偏凉，孕妇及脾胃虚寒明显者慎用。食疗不能替代诊疗。",
+      "tags": [
+        "薏苡仁",
+        "湿阻中焦",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_perilla",
+      "title": "紫苏的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "风寒束表"
+      ],
+      "content": "紫苏能发表散寒、行气和胃，风寒感冒初起兼胸闷恶心者可用紫苏叶泡水或煮粥。气虚多汗者不宜多用。若发热持续或症状加重，应及时就医。",
+      "tags": [
+        "紫苏",
+        "风寒束表",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
+    },
+    {
+      "id": "ha_herb_kudzu",
+      "title": "葛根的日常调护用法",
+      "category": "饮食",
+      "syndromes": [
+        "胃阴不足",
+        "风寒束表"
+      ],
+      "content": "葛根能解肌退热、生津止渴，外感初起颈项拘紧或口干渴者可饮用葛根粉冲调。葛粉性偏凉，脾胃虚寒、腹泻者不宜多食。食疗不能替代诊疗，持续不适请就医。",
+      "tags": [
+        "葛根",
+        "胃阴不足",
+        "风寒束表",
+        "药食同源",
+        "食疗"
+      ],
+      "source": "jangviktor-web/nihaixia-app (MIT License)"
     }
   ]
 }

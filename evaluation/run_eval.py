@@ -158,9 +158,10 @@ def check_turn(expect, record):
         if fragment not in record["response"]:
             failures.append(f"response 未包含 {fragment!r}")
 
-    # 知识检索断言：直接调 search_knowledge 校验命中，不依赖主流程的调用时机
+    # 知识检索断言：直接调 search_knowledge 校验命中，不依赖主流程的调用时机；
+    # 窗口取 8（大于默认 5），避免新增相关条目把原有期望项挤出小窗口造成误报
     if "knowledge_query" in expect:
-        retrieval = search_knowledge(expect["knowledge_query"])
+        retrieval = search_knowledge(expect["knowledge_query"], top_k=8)
         hit_names = [hit["name"] for hit in retrieval["hits"]]
         for wanted in expect.get("knowledge_hits_contain", []):
             if wanted not in hit_names:

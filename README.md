@@ -162,12 +162,12 @@ knowledge/data/term_normalization.json       口语别名 → 规范术语归一
 knowledge/data/chief_complaint_followup.json 主诉追问优先级
 knowledge/data/red_flags.json                高风险红旗信号表
 knowledge/data/risk_rules.json               风险分层规则（外置，schema 校验）
-knowledge/data/formulas.json                 方剂语料（24 条，与证型挂钩）
-knowledge/data/health_advice.json            调护语料（20 条）
+knowledge/data/formulas.json                 方剂语料（44 条，与证型挂钩）
+knowledge/data/health_advice.json            调护语料（32 条）
 knowledge/data/faq.json                      常见问答语料（14 条）
 ```
 
-三类语料共 58 条，供 RAG 检索注入：最终建议前用 BM25（零依赖自实现）按 top 证型候选与主诉检索方剂/调护/FAQ，以“知识库参考”段（含知识库版本行）注入真实 provider 的最终回复；检索失败静默跳过，Mock 路径行为不变。检索器后端可切换（BM25 / TF-IDF），`evaluation/compare_retrievers.py` 用同一金标准集对比两者命中与排名。
+三类语料共 90 条，供 RAG 检索注入：最终建议前用 BM25（零依赖自实现）按 top 证型候选与主诉检索方剂/调护/FAQ，以“知识库参考”段（含知识库版本行）注入真实 provider 的最终回复；检索失败静默跳过，Mock 路径行为不变。检索器后端可切换（BM25 / TF-IDF），`evaluation/compare_retrievers.py` 用同一金标准集对比两者命中与排名。其中 32 条（经方 20 + 药食同源调护 12）整理自开源项目 [jangviktor-web/nihaixia-app](https://github.com/jangviktor-web/nihaixia-app)（MIT License，条内 `source` 字段标注），内容为白话转述、附免责声明。
 
 `evaluation/cases/` 下是 15 个带逐轮断言的对话剧本，覆盖高风险急诊、典型证型完整问诊、信息不足、前后矛盾、脉诊接入与拒绝、高龄风险、红旗否认豁免、风险规则命中等场景；`evaluation/run_eval.py` 回放剧本走真实 LangGraph 链路，输出通过明细与汇总指标（风险识别准确率、红旗 precision/recall、收敛轮数、replan 率）。
 

@@ -1192,16 +1192,25 @@ def test_corpus_knowledge_and_retrieval():
         and "原样保留" in deepseek_llm.prompts[0]
     )
 
-    # C5：扩充语料可被加载且确定性命中（方剂 24/调护 20/FAQ 14 = 58 条）
+    # C5/C8：语料可被加载且确定性命中（方剂 44/调护 32/FAQ 14 = 90 条，含 MIT 开源引入 32 条）
     from knowledge.tcm_knowledge import get_corpus
 
     corpus_entries = get_corpus()
     new_formula_top = search_knowledge("小柴胡汤", top_k=1)["hits"]
     new_faq_top = search_knowledge("中药应该怎么煎服", top_k=1)["hits"]
     corpus_expansion_ok = (
-        len(corpus_entries) == 58
+        len(corpus_entries) == 90
         and bool(new_formula_top) and new_formula_top[0]["id"] == "f_xiao_chaihu_tang"
         and bool(new_faq_top) and new_faq_top[0]["id"] == "faq_how_to_decoct"
+    )
+
+    # C8：MIT 引入经方确定性 top-1 命中，且来源标注字段在场（许可合规要求）
+    mit_formula_top = search_knowledge("真武汤", top_k=1)["hits"]
+    mit_entry = next((e for e in corpus_entries if e["id"] == "f_zhenwu_tang"), None)
+    mit_import_ok = (
+        bool(mit_formula_top) and mit_formula_top[0]["id"] == "f_zhenwu_tang"
+        and mit_entry is not None
+        and "MIT License" in mit_entry.get("source", "")
     )
 
     # R3：TF-IDF 对比后端——与 BM25 同金标准的确定性排名，命中结构一致（含 content）
@@ -1253,6 +1262,7 @@ def test_corpus_knowledge_and_retrieval():
         ("pulse request skips llm rewrite", pulse_direct_ok),
         ("final prompt keeps knowledge citation clause", citation_kept_clause_ok),
         ("corpus expansion loads and retrieves deterministically", corpus_expansion_ok),
+        ("mit-sourced formulas carry attribution and rank top-1", mit_import_ok),
         ("tfidf backend ranks gold queries deterministically", tfidf_ok),
         ("compare script rank statistics correct", stats_ok),
     ]
