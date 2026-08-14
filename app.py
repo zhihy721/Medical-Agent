@@ -119,6 +119,39 @@ def _config_from_payload(payload):
     return updates
 
 
+_PROFILE_LIST_KEYS = ("past_history", "allergy_history", "medication_history")
+
+
+def _normalize_profile_payload(payload):
+    """规范化手填画像入参：age 仅接受数字字符串，列表字段接受数组或逗号/顿号分隔字符串。"""
+    payload = payload or {}
+    normalized = {}
+    age = str(payload.get("age") or "").strip()
+    normalized["age"] = age if age.isdigit() else ""
+    normalized["sex"] = str(payload.get("sex") or "").strip()
+    for key in _PROFILE_LIST_KEYS:
+        raw = payload.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, str):
+            raw = [item.strip() for chunk in raw.replace("、", ",").split(",") for item in chunk.split("，")]
+        normalized[key] = list(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
+    return normalized
+
+
+def _profile_response(user_id):
+    profile = profile_store.get_profile(user_id, None) or {}
+    return {
+        "user_id": user_id,
+        "age": profile.get("age", ""),
+        "sex": profile.get("sex", ""),
+        "past_history": profile.get("past_history", []),
+        "allergy_history": profile.get("allergy_history", []),
+        "medication_history": profile.get("medication_history", []),
+        "profile_summary": profile.get("profile_summary", "长期画像暂未形成"),
+    }
+
+
 def _merged_config_for_test(payload):
     config = read_config()
     updates = _config_from_payload(payload)
@@ -285,6 +318,38 @@ def chat():
         )
     except Exception as exc:
         return jsonify({"response": f"系统处理失败: {exc}"}), 500
+
+
+@app.route("/api/profile", methods=["GET"])
+def api_get_profile():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"ok": False, "message": "当前无活跃用户"}), 400
+    return jsonify(_profile_response(user_id))
+
+
+@app.route("/api/profile", methods=["POST"])
+def api_save_profile():
+    try:
+        entry = _get_agent()
+        agent = entry["agent"]
+        payload = _normalize_profile_payload(request.get_json(silent=True) or {})
+        # 与会话串行化：避免与 /chat 并发时 case_state 与会话文件互相覆盖
+        with entry["lock"]:
+            agent.memory.apply_manual_profile(payload)
+        return jsonify({"ok": True, "profile": _profile_response(session.get("user_id"))})
+    except Exception as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 500
+
+
+@app.route("/api/profile/clear", methods=["POST"])
+def api_clear_profile():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify({"ok": False, "message": "当前无活跃用户"}), 400
+    profile_store.delete_profile(user_id)
+    # 仅清长期画像文件，不动当前会话 case_state
+    return jsonify({"ok": True, "profile": _profile_response(user_id)})
 
 
 @app.route("/api/debug/trace", methods=["GET"])

@@ -24,6 +24,10 @@ class InMemoryProfileStore:
     def set_profile(self, user_id, profile):
         self._profiles[user_id] = deepcopy(profile)
 
+    def delete_profile(self, user_id):
+        # 不存在时静默返回，清除长期记忆是幂等操作
+        self._profiles.pop(user_id, None)
+
 
 class JsonFileProfileStore:
     """
@@ -49,3 +53,9 @@ class JsonFileProfileStore:
 
     def set_profile(self, user_id, profile):
         write_json_file(self._profile_path(user_id), deepcopy(profile))
+
+    def delete_profile(self, user_id):
+        # 不存在时静默返回，清除长期记忆是幂等操作
+        path = self._profile_path(user_id)
+        if path.exists():
+            path.unlink()

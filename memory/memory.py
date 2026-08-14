@@ -170,6 +170,9 @@ class ConversationMemory:
             "tcm_summary": "",
             "description": "",
         })
+        # 长期画像预填：新会话用画像里已积累的信息预填空字段，
+        # 让风险评估与追问决策立即受益；恢复旧会话时已有值不覆盖
+        self._prefill_case_state_from_profile()
 
     # 添加用户输入到历史中，并更新相关状态
     # 1. 将用户输入添加到history列表中，记录角色和文本
@@ -218,6 +221,54 @@ class ConversationMemory:
     def update_user_coords(self, latitude, longitude):
         self.case_state["user_coords"] = {"latitude": latitude, "longitude": longitude}
         self._persist_session_state()
+
+    # 手填基本信息的专用通道：表单内容直接写入长期画像并同步当前会话
+    # 不走 update_case、不写 slot_history：手填是用户权威编辑而非对话陈述，
+    # 不应与对话提取值触发矛盾检测
+    def apply_manual_profile(self, fields):
+        fields = fields or {}
+        profile = self.get_long_term_profile()
+
+        # 标量字段：非空才覆盖，留空不清空已有画像值
+        for field in self.PROFILE_SCALAR_FIELDS:
+            value = str(fields.get(field) or "").strip()
+            if value:
+                profile[field] = value
+
+        # 列表字段：整体替换，表单所见即所得，提交列表即最新全集
+        for field in self.PROFILE_LIST_FIELDS:
+            if field in fields:
+                items = fields.get(field) or []
+                profile[field] = list(dict.fromkeys(item for item in items if item))
+
+        profile["profile_summary"] = self._build_profile_summary(profile)
+        self.profile_store.set_profile(self.user_id, profile)
+
+        # 同步当前会话 case_state，同样覆盖语义，让风险评估/追问立即生效
+        for field in self.PROFILE_SCALAR_FIELDS:
+            if profile.get(field):
+                self.case_state[field] = profile[field]
+        for field in self.PROFILE_LIST_FIELDS:
+            self.case_state[field] = list(profile.get(field) or [])
+        self.case_state["summary"] = self._build_summary()
+        self._persist_session_state()
+        return profile
+
+    # 画像预填：仅当 case_state 字段为空时从长期画像回填，不写 slot_history
+    def _prefill_case_state_from_profile(self):
+        profile = self.get_long_term_profile()
+        changed = False
+        for field in self.PROFILE_SCALAR_FIELDS:
+            if not self.case_state.get(field) and profile.get(field):
+                self.case_state[field] = profile[field]
+                changed = True
+        for field in self.PROFILE_LIST_FIELDS:
+            if not self.case_state.get(field) and profile.get(field):
+                self.case_state[field] = list(profile[field])
+                changed = True
+        if changed:
+            self.case_state["summary"] = self._build_summary()
+            self._persist_session_state()
 
     # 专门处理脉搏数据的输入
     def update_pulse_data(self, pulse_data):

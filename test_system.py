@@ -386,6 +386,124 @@ def test_session_store_reuses_session_state_across_memory_instances():
             print(f"[FAIL] {label}")
     return passed
 
+# 测试手填基本信息与长期记忆绑定：apply_manual_profile 写入画像并同步当前会话，
+# 不写 slot_history 不触发矛盾检测；新会话从画像预填空字段，旧会话已有值不覆盖；
+# delete_profile 清除后回落到默认画像
+def test_manual_profile_save_and_prefill():
+    from memory.memory import ConversationMemory
+    from memory.profile_store import InMemoryProfileStore
+    from memory.session_store import InMemorySessionStore
+
+    profile_store = InMemoryProfileStore()
+    memory = ConversationMemory(profile_store=profile_store, user_id="manual-user")
+    memory.apply_manual_profile(
+        {
+            "age": "45",
+            "sex": "男",
+            "past_history": ["高血压", "糖尿病"],
+            "allergy_history": ["青霉素"],
+            "medication_history": ["阿司匹林"],
+        }
+    )
+    profile = memory.get_long_term_profile()
+    case_state = memory.get_case_state()
+
+    # 同用户新会话：长期画像预填空字段
+    second_case_state = ConversationMemory(
+        profile_store=profile_store, user_id="manual-user"
+    ).get_case_state()
+
+    # 旧会话恢复：已有值不被画像覆盖（直接写 case_state 避免 update_case 的画像提升干扰）
+    session_store = InMemorySessionStore()
+    preset_memory = ConversationMemory(
+        profile_store=profile_store,
+        user_id="manual-user",
+        session_store=session_store,
+        session_id="restored-session",
+    )
+    preset_memory.case_state["age"] = "60"
+    preset_memory._persist_session_state()
+    restored_state = ConversationMemory(
+        profile_store=profile_store,
+        user_id="manual-user",
+        session_store=session_store,
+        session_id="restored-session",
+    ).get_case_state()
+
+    # 清除长期记忆后回落默认画像
+    profile_store.delete_profile("manual-user")
+    deleted = profile_store.get_profile("manual-user", memory._default_profile())
+
+    checks = [
+        ("manual profile saves scalars", profile["age"] == "45" and profile["sex"] == "男"),
+        ("manual profile saves lists", "高血压" in profile["past_history"] and "青霉素" in profile["allergy_history"]),
+        ("manual profile summary generated", profile["profile_summary"] != "长期画像暂未形成"),
+        ("manual profile syncs case state", case_state["age"] == "45" and "糖尿病" in case_state["past_history"]),
+        ("manual profile skips slot history", "age" not in case_state["slot_history"] and not case_state["contradictions"]),
+        ("new session prefills from profile", second_case_state["age"] == "45" and "高血压" in second_case_state["past_history"]),
+        ("restored session values not overwritten", restored_state["age"] == "60"),
+        ("delete profile returns default", deleted["age"] == "" and deleted["profile_summary"] == "长期画像暂未形成"),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+# 测试手填画像 API 往返：POST 规范化分隔字符串并写入画像与会话，GET 读回，clear 仅清长期文件
+def test_profile_api_roundtrip():
+    import app as app_module
+    from memory.profile_store import InMemoryProfileStore
+    from memory.session_store import InMemorySessionStore
+
+    original_profile_store = app_module.profile_store
+    original_session_store = app_module.session_store
+    # 换成内存存储，避免测试污染 data/profiles 与 data/sessions
+    app_module.profile_store = InMemoryProfileStore()
+    app_module.session_store = InMemorySessionStore()
+    try:
+        client = app_module.app.test_client()
+        post = client.post(
+            "/api/profile",
+            json={
+                "age": "70",
+                "sex": "女",
+                "past_history": "高血压, 糖尿病",
+                "allergy_history": ["青霉素"],
+                "medication_history": "",
+            },
+        )
+        post_data = post.get_json() or {}
+        get_data = client.get("/api/profile").get_json() or {}
+        clear_data = client.post("/api/profile/clear").get_json() or {}
+    finally:
+        app_module.profile_store = original_profile_store
+        app_module.session_store = original_session_store
+        app_module.session_cache.clear()
+
+    saved = post_data.get("profile", {})
+    checks = [
+        ("profile api save ok", post.status_code == 200 and post_data.get("ok")),
+        ("profile api splits delimited string", saved.get("past_history") == ["高血压", "糖尿病"]),
+        ("profile api keeps array field", saved.get("allergy_history") == ["青霉素"]),
+        ("profile api blank list becomes empty", saved.get("medication_history") == []),
+        ("profile api read back", get_data.get("age") == "70" and get_data.get("sex") == "女"),
+        ("profile api clear resets", clear_data.get("ok") and clear_data.get("profile", {}).get("age") == ""),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
 # 测试对话总结和未决问题的生成逻辑，验证当用户提供了新的症状信息后
 # 系统能够正确总结当前对话内容，提取已确认的症状信息，并生成针对性的未决问题列表
 def test_conversation_summary_and_open_questions():
@@ -2168,6 +2286,8 @@ def main():
         test_long_term_profile_promotion(),
         test_profile_store_reuses_long_term_profile_across_sessions(),
         test_session_store_reuses_session_state_across_memory_instances(),
+        test_manual_profile_save_and_prefill(),
+        test_profile_api_roundtrip(),
         test_conversation_summary_and_open_questions(),
         test_langgraph_runtime_smoke(),
         test_langgraph_high_risk_escalation(),

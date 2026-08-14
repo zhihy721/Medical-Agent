@@ -349,6 +349,22 @@
             margin-bottom: 6px;
         }
 
+        .profile-form {
+            display: grid;
+            gap: 8px;
+        }
+
+        .profile-row {
+            display: grid;
+            gap: 8px;
+            grid-template-columns: 1fr 1.4fr;
+        }
+
+        .profile-form input,
+        .profile-form select {
+            min-height: 36px;
+        }
+
         .chips {
             display: flex;
             flex-wrap: wrap;
@@ -543,6 +559,29 @@
                     <div class="state-block">
                         <div class="state-label">缺失字段</div>
                         <div id="missing-slots" class="chips"><span class="muted">暂无</span></div>
+                    </div>
+                    <div class="state-block">
+                        <div class="state-label">我的信息（手填后写入长期记忆）</div>
+                        <div class="profile-form">
+                            <div class="profile-row">
+                                <input id="profile-age" type="number" min="0" max="150" placeholder="年龄">
+                                <select id="profile-sex">
+                                    <option value="">性别：未填写</option>
+                                    <option value="男">男</option>
+                                    <option value="女">女</option>
+                                </select>
+                            </div>
+                            <input id="profile-past-history" type="text" placeholder="既往史，逗号分隔，如：高血压、糖尿病">
+                            <input id="profile-allergy-history" type="text" placeholder="过敏史，逗号分隔，无则留空">
+                            <input id="profile-medication-history" type="text" placeholder="用药史，逗号分隔，如：阿司匹林">
+                            <button id="profile-save-btn" class="secondary">保存我的信息</button>
+                            <div id="profile-message" class="muted"></div>
+                        </div>
+                    </div>
+                    <div class="state-block">
+                        <div class="state-label">长期记忆</div>
+                        <div id="profile-summary" class="muted">长期画像暂未形成</div>
+                        <button id="profile-clear-btn" class="secondary">清除长期记忆</button>
                     </div>
                     <div class="state-block">
                         <div class="state-label">最近追问字段</div>
@@ -911,6 +950,74 @@
             requestGeolocation();
         }
 
+        // 长期画像（基本信息）：手填写入长期记忆，新会话会自动预填这些信息
+        function fillProfileForm(profile) {
+            document.getElementById("profile-age").value = profile.age || "";
+            document.getElementById("profile-sex").value = profile.sex || "";
+            document.getElementById("profile-past-history").value = (profile.past_history || []).join("、");
+            document.getElementById("profile-allergy-history").value = (profile.allergy_history || []).join("、");
+            document.getElementById("profile-medication-history").value = (profile.medication_history || []).join("、");
+            document.getElementById("profile-summary").textContent = profile.profile_summary || "长期画像暂未形成";
+        }
+
+        async function loadProfile() {
+            try {
+                const response = await fetch("/api/profile");
+                if (!response.ok) {
+                    return;
+                }
+                fillProfileForm(await response.json());
+            } catch (error) {
+                console.warn("长期画像加载失败:", error);
+            }
+        }
+
+        async function saveProfile() {
+            const message = document.getElementById("profile-message");
+            const payload = {
+                age: document.getElementById("profile-age").value.trim(),
+                sex: document.getElementById("profile-sex").value,
+                past_history: document.getElementById("profile-past-history").value,
+                allergy_history: document.getElementById("profile-allergy-history").value,
+                medication_history: document.getElementById("profile-medication-history").value,
+            };
+            try {
+                const response = await fetch("/api/profile", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                if (data.ok) {
+                    fillProfileForm(data.profile);
+                    message.textContent = "已保存，本次会话立即生效，新会话自动预填";
+                } else {
+                    message.textContent = `保存失败：${data.message || "未知错误"}`;
+                }
+            } catch (error) {
+                message.textContent = "保存失败：网络异常";
+            }
+        }
+
+        async function clearProfile() {
+            if (!confirm("确定清除长期记忆？将删除已积累的年龄/病史信息，不影响本次对话。")) {
+                return;
+            }
+            const message = document.getElementById("profile-message");
+            try {
+                const response = await fetch("/api/profile/clear", { method: "POST" });
+                const data = await response.json();
+                if (data.ok) {
+                    fillProfileForm(data.profile);
+                    message.textContent = "已清除，不影响本次对话";
+                } else {
+                    message.textContent = `清除失败：${data.message || "未知错误"}`;
+                }
+            } catch (error) {
+                message.textContent = "清除失败：网络异常";
+            }
+        }
+
         async function sendMessage(prefilledText = null) {
             const message = (prefilledText ?? messageInput.value).trim();
             if (!message) {
@@ -995,8 +1102,11 @@
         }
 
         providerInput.addEventListener("change", updateProviderFields);
+        document.getElementById("profile-save-btn").addEventListener("click", saveProfile);
+        document.getElementById("profile-clear-btn").addEventListener("click", clearProfile);
 
         loadConfigStatus();
+        loadProfile();
         initUserGeolocation();
     </script>
 </body>
