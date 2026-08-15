@@ -424,6 +424,148 @@
             color: var(--muted);
         }
 
+        .topbar-actions {
+            align-items: center;
+            display: flex;
+            gap: 10px;
+        }
+
+        .side-tabs {
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 4px;
+            padding: 10px 14px 0;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            border-radius: 6px 6px 0 0;
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 600;
+            min-height: 34px;
+            padding: 0 10px;
+        }
+
+        .tab-btn:hover {
+            color: var(--primary);
+        }
+
+        .tab-btn.active {
+            border-bottom-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .risk-banner {
+            background: #fff0ee;
+            border: 1px solid #f3b4ad;
+            border-radius: 8px;
+            color: var(--danger);
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.5;
+            margin: 12px 18px 0;
+            padding: 10px 12px;
+        }
+
+        .risk-badge {
+            border-radius: 999px;
+            display: inline-block;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 4px 12px;
+        }
+
+        .risk-badge.high {
+            background: #fee4e2;
+            color: var(--danger);
+        }
+
+        .risk-badge.medium {
+            background: #fdf1de;
+            color: var(--warning);
+        }
+
+        .risk-badge.low {
+            background: var(--surface-soft);
+            color: var(--primary-dark);
+        }
+
+        .thinking-dots span {
+            animation: blink 1.2s infinite;
+            display: inline-block;
+        }
+
+        .thinking-dots span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .thinking-dots span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes blink {
+            0%, 80%, 100% { opacity: 0.2; }
+            40% { opacity: 1; }
+        }
+
+        .chip-input {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 6px 8px;
+        }
+
+        .chip-input-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .chip-input-list:empty {
+            display: none;
+        }
+
+        .chip-input-item {
+            align-items: center;
+            background: var(--surface-soft);
+            border-radius: 999px;
+            color: var(--primary-dark);
+            display: inline-flex;
+            font-size: 12px;
+            gap: 4px;
+            padding: 3px 6px 3px 9px;
+        }
+
+        .chip-input-remove {
+            background: transparent;
+            border: 0;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1;
+            min-height: 0;
+            padding: 2px 3px;
+        }
+
+        .chip-input-remove:hover {
+            color: var(--danger);
+        }
+
+        .chip-input-field {
+            border: 0;
+            min-height: 28px;
+            padding: 0 2px;
+        }
+
+        .chip-input-field:focus {
+            box-shadow: none;
+        }
+
         @media (max-width: 900px) {
             .workspace,
             .form-grid {
@@ -453,9 +595,12 @@
                 <h1>Medical Agent</h1>
                 <span>本地智能问诊演示</span>
             </div>
-            <div id="global-status" class="status-pill">
-                <span class="dot off"></span>
-                <span>正在检查配置</span>
+            <div class="topbar-actions">
+                <button id="edit-config-btn" class="secondary">编辑配置</button>
+                <div id="global-status" class="status-pill">
+                    <span class="dot off"></span>
+                    <span>正在检查配置</span>
+                </div>
             </div>
         </header>
 
@@ -509,6 +654,8 @@
                     <p>请描述当前最明显的不适，系统会根据缺失信息继续追问。</p>
                 </div>
 
+                <div id="risk-banner" class="risk-banner hidden">当前风险等级：高。建议尽快就医；若症状剧烈或持续加重，请直接前往急诊。</div>
+
                 <div id="chat-messages" class="messages">
                     <div class="message bot">
                         <div class="label">Medical Agent</div>
@@ -540,69 +687,88 @@
                     <p id="runtime-summary">等待状态更新</p>
                     <p id="geo-status">定位：未获取</p>
                 </div>
+                <div class="side-tabs">
+                    <button class="tab-btn active" data-tab="tab-profile">我的信息</button>
+                    <button class="tab-btn" data-tab="tab-status">问诊状态</button>
+                    <button class="tab-btn" data-tab="tab-debug">调试信息</button>
+                </div>
                 <div class="state-list">
-                    <div class="state-block">
-                        <div class="state-label">模型</div>
-                        <div id="llm-provider" class="muted">provider: loading</div>
-                        <div id="llm-config" class="muted">deepseek configured: loading</div>
-                        <div id="llm-runtime" class="muted">last used: loading</div>
-                        <div id="llm-metrics" class="muted">metrics: 暂无调用</div>
-                    </div>
-                    <div class="state-block">
-                        <div class="state-label">当前状态</div>
-                        <div id="status-text" class="muted">INIT</div>
-                    </div>
-                    <div class="state-block">
-                        <div class="state-label">已识别症状</div>
-                        <div id="symptom-chips" class="chips"><span class="muted">暂无</span></div>
-                    </div>
-                    <div class="state-block">
-                        <div class="state-label">缺失字段</div>
-                        <div id="missing-slots" class="chips"><span class="muted">暂无</span></div>
-                    </div>
-                    <div class="state-block">
-                        <div class="state-label">我的信息（手填后写入长期记忆）</div>
-                        <div class="profile-form">
-                            <div class="profile-row">
-                                <input id="profile-age" type="number" min="0" max="150" placeholder="年龄">
-                                <select id="profile-sex">
-                                    <option value="">性别：未填写</option>
-                                    <option value="男">男</option>
-                                    <option value="女">女</option>
-                                </select>
+                    <div id="tab-profile" class="tab-panel">
+                        <div class="state-block">
+                            <div class="state-label">基本信息（手填后写入长期记忆）</div>
+                            <div class="profile-form">
+                                <div class="profile-row">
+                                    <input id="profile-age" type="number" min="0" max="150" placeholder="年龄">
+                                    <select id="profile-sex">
+                                        <option value="">性别：未填写</option>
+                                        <option value="男">男</option>
+                                        <option value="女">女</option>
+                                    </select>
+                                </div>
+                                <div class="chip-input" id="ci-past-history">
+                                    <div class="chip-input-list"></div>
+                                    <input class="chip-input-field" type="text" placeholder="既往史：输入后回车添加，如 高血压">
+                                </div>
+                                <div class="chip-input" id="ci-allergy-history">
+                                    <div class="chip-input-list"></div>
+                                    <input class="chip-input-field" type="text" placeholder="过敏史：输入后回车添加，无则留空">
+                                </div>
+                                <div class="chip-input" id="ci-medication-history">
+                                    <div class="chip-input-list"></div>
+                                    <input class="chip-input-field" type="text" placeholder="用药史：输入后回车添加，如 阿司匹林">
+                                </div>
+                                <button id="profile-save-btn" class="secondary">保存我的信息</button>
+                                <div id="profile-message" class="muted"></div>
                             </div>
-                            <input id="profile-past-history" type="text" placeholder="既往史，逗号分隔，如：高血压、糖尿病">
-                            <input id="profile-allergy-history" type="text" placeholder="过敏史，逗号分隔，无则留空">
-                            <input id="profile-medication-history" type="text" placeholder="用药史，逗号分隔，如：阿司匹林">
-                            <button id="profile-save-btn" class="secondary">保存我的信息</button>
-                            <div id="profile-message" class="muted"></div>
+                        </div>
+                        <div class="state-block">
+                            <div class="state-label">长期记忆</div>
+                            <div id="profile-summary" class="muted">长期画像暂未形成</div>
+                            <button id="profile-clear-btn" class="secondary">清除长期记忆</button>
                         </div>
                     </div>
-                    <div class="state-block">
-                        <div class="state-label">长期记忆</div>
-                        <div id="profile-summary" class="muted">长期画像暂未形成</div>
-                        <button id="profile-clear-btn" class="secondary">清除长期记忆</button>
-                    </div>
-                    <div class="state-block">
-                        <div class="state-label">最近追问字段</div>
-                        <div id="last-followup" class="muted">暂无</div>
-                    </div>
-                    <div class="state-block">
-                        <div class="state-label">风险等级</div>
-                        <div id="risk-level" class="muted">UNKNOWN</div>
-                    </div>
-                    <div class="state-block">
-                        <div class="state-label">结构化摘要</div>
-                        <div id="case-summary" class="muted">等待输入</div>
-                    </div>
-                    <div class="state-block">
-                        <div class="state-label">执行轨迹
-                            <button id="trace-toggle-btn" class="secondary trace-toggle">展开</button>
+                    <div id="tab-status" class="tab-panel hidden">
+                        <div class="state-block">
+                            <div class="state-label">当前状态</div>
+                            <div id="status-text" class="muted">INIT</div>
                         </div>
-                        <div id="trace-summary" class="muted">等待运行</div>
-                        <div id="trace-timeline" class="trace-timeline hidden"></div>
+                        <div class="state-block">
+                            <div class="state-label">已识别症状</div>
+                            <div id="symptom-chips" class="chips"><span class="muted">暂无</span></div>
+                        </div>
+                        <div class="state-block">
+                            <div class="state-label">缺失字段</div>
+                            <div id="missing-slots" class="chips"><span class="muted">暂无</span></div>
+                        </div>
+                        <div class="state-block">
+                            <div class="state-label">最近追问字段</div>
+                            <div id="last-followup" class="muted">暂无</div>
+                        </div>
+                        <div class="state-block">
+                            <div class="state-label">风险等级</div>
+                            <div id="risk-level" class="muted">UNKNOWN</div>
+                        </div>
+                        <div class="state-block">
+                            <div class="state-label">结构化摘要</div>
+                            <div id="case-summary" class="muted">等待输入</div>
+                        </div>
                     </div>
-                    <button id="edit-config-btn" class="secondary">编辑配置</button>
+                    <div id="tab-debug" class="tab-panel hidden">
+                        <div class="state-block">
+                            <div class="state-label">模型</div>
+                            <div id="llm-provider" class="muted">provider: loading</div>
+                            <div id="llm-config" class="muted">deepseek configured: loading</div>
+                            <div id="llm-runtime" class="muted">last used: loading</div>
+                            <div id="llm-metrics" class="muted">metrics: 暂无调用</div>
+                        </div>
+                        <div class="state-block">
+                            <div class="state-label">执行轨迹
+                                <button id="trace-toggle-btn" class="secondary trace-toggle">展开</button>
+                            </div>
+                            <div id="trace-summary" class="muted">等待运行</div>
+                            <div id="trace-timeline" class="trace-timeline hidden"></div>
+                        </div>
+                    </div>
                 </div>
             </aside>
         </section>
@@ -749,13 +915,16 @@
             document.getElementById("mock-mode-btn").disabled = disabled;
         }
 
+        const WELCOME_TEXT = "你好，我会先收集主要症状，再根据缺失信息继续追问，最后给出分诊建议。请先描述当前最明显的不适。";
+
         function addMessage(text, type) {
             const node = document.createElement("div");
             node.className = `message ${type}`;
 
             const label = document.createElement("div");
             label.className = "label";
-            label.textContent = type === "user" ? "User" : "Medical Agent";
+            const time = new Date().toTimeString().slice(0, 5);
+            label.textContent = type === "user" ? `User · ${time}` : `Medical Agent · ${time}`;
 
             const content = document.createElement("div");
             content.textContent = text;
@@ -764,6 +933,57 @@
             node.appendChild(content);
             chatMessages.appendChild(node);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // 以后端会话历史为准整体回放：页面刷新/发送/重置后统一用这个渲染，
+        // 避免前端本地追加与服务端历史重复；历史为空时展示欢迎语
+        function renderMessages(messages) {
+            chatMessages.innerHTML = "";
+            if (!messages || messages.length === 0) {
+                addMessage(WELCOME_TEXT, "bot");
+                return;
+            }
+            messages.forEach(item => addMessage(item.content, item.role === "user" ? "user" : "bot"));
+        }
+
+        // 思考中指示：LLM 调用常达数秒，气泡内每秒计时避免用户误以为卡死
+        let thinkingHandle = null;
+
+        function showThinking() {
+            removeThinking();
+            const node = document.createElement("div");
+            node.className = "message bot";
+
+            const label = document.createElement("div");
+            label.className = "label";
+            label.textContent = "Medical Agent";
+
+            const content = document.createElement("div");
+            content.innerHTML = '<span class="thinking-dots"><span>●</span><span>●</span><span>●</span></span> 正在思考… <span class="thinking-seconds">0</span> 秒';
+
+            node.appendChild(label);
+            node.appendChild(content);
+            chatMessages.appendChild(node);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            let seconds = 0;
+            const timer = setInterval(() => {
+                seconds += 1;
+                const target = content.querySelector(".thinking-seconds");
+                if (target) {
+                    target.textContent = seconds;
+                }
+            }, 1000);
+            thinkingHandle = { node, timer };
+        }
+
+        function removeThinking() {
+            if (!thinkingHandle) {
+                return;
+            }
+            clearInterval(thinkingHandle.timer);
+            thinkingHandle.node.remove();
+            thinkingHandle = null;
         }
 
         function renderChips(targetId, values) {
@@ -815,16 +1035,17 @@
             const riskLevel = document.getElementById("risk-level");
             const level = caseState.risk_level || "UNKNOWN";
             riskLevel.textContent = level;
-            riskLevel.className = "";
+            riskLevel.className = "muted";
             if (level === "HIGH") {
-                riskLevel.classList.add("risk-high");
+                riskLevel.className = "risk-badge high";
             } else if (level === "MEDIUM") {
-                riskLevel.classList.add("risk-medium");
+                riskLevel.className = "risk-badge medium";
             } else if (level === "LOW") {
-                riskLevel.classList.add("risk-low");
-            } else {
-                riskLevel.classList.add("muted");
+                riskLevel.className = "risk-badge low";
             }
+
+            // 高风险是安全信息：除侧栏徽章外，在聊天区顶部给醒目横幅
+            document.getElementById("risk-banner").classList.toggle("hidden", level !== "HIGH");
 
             document.getElementById("case-summary").textContent = caseState.summary || "等待输入";
             document.getElementById("runtime-summary").textContent = `runtime: ${agentRuntime}`;
@@ -837,6 +1058,9 @@
                 const response = await fetch("/status");
                 const data = await response.json();
                 renderCaseState(data.case_state, data.llm_status, data.config_status, data.agent_runtime);
+                if (Array.isArray(data.messages)) {
+                    renderMessages(data.messages);
+                }
                 renderMetrics(data.metrics);
                 loadTrace();
             } catch (error) {
@@ -950,13 +1174,57 @@
             requestGeolocation();
         }
 
+        // 病史标签式输入：输入后回车/逗号/顿号生成可删除标签，
+        // 保存时收集为数组提交（后端已支持数组与分隔字符串两种格式）
+        function buildChip(list, value) {
+            const exists = Array.from(list.children).some(chip => chip.dataset.value === value);
+            if (exists) {
+                return;
+            }
+            const chip = document.createElement("span");
+            chip.className = "chip-input-item";
+            chip.dataset.value = value;
+
+            const text = document.createElement("span");
+            text.textContent = value;
+
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "chip-input-remove";
+            remove.textContent = "×";
+            remove.addEventListener("click", () => chip.remove());
+
+            chip.appendChild(text);
+            chip.appendChild(remove);
+            list.appendChild(chip);
+        }
+
+        function commitChip(input) {
+            const value = input.value.trim();
+            input.value = "";
+            if (!value) {
+                return;
+            }
+            buildChip(input.closest(".chip-input").querySelector(".chip-input-list"), value);
+        }
+
+        function getChipValues(containerId) {
+            return Array.from(document.querySelectorAll(`#${containerId} .chip-input-item`)).map(chip => chip.dataset.value);
+        }
+
+        function setChipValues(containerId, values) {
+            const list = document.querySelector(`#${containerId} .chip-input-list`);
+            list.innerHTML = "";
+            (values || []).forEach(value => buildChip(list, value));
+        }
+
         // 长期画像（基本信息）：手填写入长期记忆，新会话会自动预填这些信息
         function fillProfileForm(profile) {
             document.getElementById("profile-age").value = profile.age || "";
             document.getElementById("profile-sex").value = profile.sex || "";
-            document.getElementById("profile-past-history").value = (profile.past_history || []).join("、");
-            document.getElementById("profile-allergy-history").value = (profile.allergy_history || []).join("、");
-            document.getElementById("profile-medication-history").value = (profile.medication_history || []).join("、");
+            setChipValues("ci-past-history", profile.past_history || []);
+            setChipValues("ci-allergy-history", profile.allergy_history || []);
+            setChipValues("ci-medication-history", profile.medication_history || []);
             document.getElementById("profile-summary").textContent = profile.profile_summary || "长期画像暂未形成";
         }
 
@@ -974,12 +1242,14 @@
 
         async function saveProfile() {
             const message = document.getElementById("profile-message");
+            // 先把输入框里还没回车确认的文字提交成标签，避免保存时丢字
+            document.querySelectorAll(".chip-input-field").forEach(commitChip);
             const payload = {
                 age: document.getElementById("profile-age").value.trim(),
                 sex: document.getElementById("profile-sex").value,
-                past_history: document.getElementById("profile-past-history").value,
-                allergy_history: document.getElementById("profile-allergy-history").value,
-                medication_history: document.getElementById("profile-medication-history").value,
+                past_history: getChipValues("ci-past-history"),
+                allergy_history: getChipValues("ci-allergy-history"),
+                medication_history: getChipValues("ci-medication-history"),
             };
             try {
                 const response = await fetch("/api/profile", {
@@ -1027,6 +1297,7 @@
             addMessage(message, "user");
             messageInput.value = "";
             sendBtn.disabled = true;
+            showThinking();
 
             // 定位未拿到坐标时懒重试：页面加载那次可能超时/位置暂不可用，
             // 用户已授权的话这里通常能立即拿到；仍失败则按城市查询
@@ -1042,11 +1313,18 @@
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
-                addMessage(data.response || "系统没有返回内容。", "bot");
+                removeThinking();
+                if (Array.isArray(data.messages)) {
+                    // 以服务端历史整体回放，保证与持久化状态一致
+                    renderMessages(data.messages);
+                } else {
+                    addMessage(data.response || "系统没有返回内容。", "bot");
+                }
                 renderCaseState(data.case_state, data.llm_status, data.config_status, data.agent_runtime);
                 renderMetrics(data.metrics);
                 loadTrace();
             } catch (error) {
+                removeThinking();
                 addMessage("请求失败，请稍后再试。", "bot");
             } finally {
                 sendBtn.disabled = false;
@@ -1057,8 +1335,7 @@
             try {
                 const response = await fetch("/reset", { method: "POST" });
                 const data = await response.json();
-                chatMessages.innerHTML = "";
-                addMessage("你好，我会先收集主要症状，再根据缺失信息继续追问，最后给出分诊建议。请先描述当前最明显的不适。", "bot");
+                renderMessages(data.messages || []);
                 renderCaseState(data.case_state, data.llm_status, data.config_status, data.agent_runtime);
             } catch (error) {
                 await loadStatus();
@@ -1104,6 +1381,30 @@
         providerInput.addEventListener("change", updateProviderFields);
         document.getElementById("profile-save-btn").addEventListener("click", saveProfile);
         document.getElementById("profile-clear-btn").addEventListener("click", clearProfile);
+
+        // 侧栏 Tab 切换：我的信息 / 问诊状态 / 调试信息
+        document.querySelectorAll(".tab-btn").forEach(button => {
+            button.addEventListener("click", () => {
+                document.querySelectorAll(".tab-btn").forEach(item => item.classList.toggle("active", item === button));
+                document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("hidden", panel.id !== button.dataset.tab));
+            });
+        });
+
+        // 病史标签输入：回车/逗号/顿号确认，空输入时退格删最后一个标签
+        document.querySelectorAll(".chip-input-field").forEach(input => {
+            input.addEventListener("keydown", event => {
+                if (event.key === "Enter" || event.key === "," || event.key === "，" || event.key === "、") {
+                    event.preventDefault();
+                    commitChip(input);
+                } else if (event.key === "Backspace" && !input.value) {
+                    const chips = input.closest(".chip-input").querySelectorAll(".chip-input-item");
+                    if (chips.length) {
+                        chips[chips.length - 1].remove();
+                    }
+                }
+            });
+            input.addEventListener("blur", () => commitChip(input));
+        });
 
         loadConfigStatus();
         loadProfile();

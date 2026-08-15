@@ -261,15 +261,31 @@ def api_reload_config():
     return jsonify({"ok": True, "status": get_config_status()})
 
 
+def _conversation_messages(agent):
+    """把会话历史映射为前端可回放的 [{role, content}] 列表。
+
+    供刷新页面后恢复聊天记录：memory.history 已随会话文件持久化，
+    读取需在会话锁内进行，由调用方保证。
+    """
+    history = getattr(agent.memory, "history", None) or []
+    return [
+        {"role": role, "content": content}
+        for role, content in history
+        if content
+    ]
+
+
 @app.route("/status", methods=["GET"])
 def status():
     entry = _get_agent()
     agent = entry["agent"]
     with entry["lock"]:
         snapshot = agent.get_case_snapshot()
+        messages = _conversation_messages(agent)
     return jsonify(
         {
             "case_state": snapshot,
+            "messages": messages,
             "llm_status": snapshot.get("llm_status", {}),
             "llm_degraded": bool(snapshot.get("llm_status", {}).get("degraded")),
             "agent_runtime": getattr(agent, "runtime_name", agent_runtime),
@@ -305,10 +321,12 @@ def chat():
         with entry["lock"]:
             response = agent.run(user_input, user_coords=user_coords)
             snapshot = agent.get_case_snapshot()
+            messages = _conversation_messages(agent)
         return jsonify(
             {
                 "response": response,
                 "case_state": snapshot,
+                "messages": messages,
                 "llm_status": snapshot.get("llm_status", {}),
                 "llm_degraded": bool(snapshot.get("llm_status", {}).get("degraded")),
                 "agent_runtime": getattr(agent, "runtime_name", agent_runtime),
@@ -379,11 +397,14 @@ def reset():
     session["session_id"] = str(uuid.uuid4())
     entry = _get_agent()
     agent = entry["agent"]
-    snapshot = agent.get_case_snapshot()
+    with entry["lock"]:
+        snapshot = agent.get_case_snapshot()
+        messages = _conversation_messages(agent)
     return jsonify(
         {
             "response": "当前会话已重置，你可以开始新的问诊演示。",
             "case_state": snapshot,
+            "messages": messages,
             "llm_status": snapshot.get("llm_status", {}),
             "agent_runtime": getattr(agent, "runtime_name", agent_runtime),
             "config_status": get_config_status(),

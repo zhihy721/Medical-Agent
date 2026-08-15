@@ -504,6 +504,60 @@ def test_profile_api_roundtrip():
             print(f"[FAIL] {label}")
     return passed
 
+
+# /status 等接口需回传 messages 供前端刷新后回放聊天记录；
+# 不依赖 LLM：直接向缓存 agent 的 memory 注入历史再验证序列化
+def test_status_api_replays_messages():
+    import app as app_module
+    from memory.profile_store import InMemoryProfileStore
+    from memory.session_store import InMemorySessionStore
+
+    original_profile_store = app_module.profile_store
+    original_session_store = app_module.session_store
+    # 换成内存存储，避免测试污染 data/profiles 与 data/sessions
+    app_module.profile_store = InMemoryProfileStore()
+    app_module.session_store = InMemorySessionStore()
+    try:
+        client = app_module.app.test_client()
+        first = client.get("/status").get_json() or {}
+        empty_messages = first.get("messages")
+
+        # 向当前会话 agent 的 memory 注入对话历史（等价于走过一轮 /chat）
+        with client.session_transaction() as sess:
+            session_id = sess.get("session_id")
+        entry = app_module.session_cache.get_or_create(session_id, lambda: None)
+        memory = entry["agent"].memory
+        memory.add_user("我发热两天了")
+        memory.add_assistant("好的，请问体温最高多少度？")
+
+        second = client.get("/status").get_json() or {}
+        replayed = second.get("messages") or []
+
+        # 重置后新会话应无历史，前端据此回到欢迎语
+        reset = client.post("/reset").get_json() or {}
+    finally:
+        app_module.profile_store = original_profile_store
+        app_module.session_store = original_session_store
+        app_module.session_cache.clear()
+
+    checks = [
+        ("status returns messages field", isinstance(empty_messages, list) and empty_messages == []),
+        ("status replays full history", len(replayed) == 2),
+        ("status replay role order", [m.get("role") for m in replayed] == ["user", "assistant"]),
+        ("status replay content", replayed[0].get("content") == "我发热两天了" and replayed[1].get("content") == "好的，请问体温最高多少度？"),
+        ("reset returns empty messages", reset.get("messages") == []),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
 # 测试对话总结和未决问题的生成逻辑，验证当用户提供了新的症状信息后
 # 系统能够正确总结当前对话内容，提取已确认的症状信息，并生成针对性的未决问题列表
 def test_conversation_summary_and_open_questions():
@@ -2288,6 +2342,7 @@ def main():
         test_session_store_reuses_session_state_across_memory_instances(),
         test_manual_profile_save_and_prefill(),
         test_profile_api_roundtrip(),
+        test_status_api_replays_messages(),
         test_conversation_summary_and_open_questions(),
         test_langgraph_runtime_smoke(),
         test_langgraph_high_risk_escalation(),
