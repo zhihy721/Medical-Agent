@@ -11,6 +11,10 @@ DEFAULT_CONFIG = {
     "DEEPSEEK_MODEL": "deepseek-chat",
     "DEEPSEEK_MAX_TOKENS": "512",
     "DEEPSEEK_TEMPERATURE": "0.2",
+    "DASHSCOPE_API_KEY": "",
+    "DASHSCOPE_VOICE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "DASHSCOPE_ASR_MODEL": "paraformer-v2",
+    "DASHSCOPE_TTS_VOICE": "longwan",
     "DATA_DIR": "data",
     "LOG_DIR": "logs",
 }
@@ -21,9 +25,15 @@ PUBLIC_FIELDS = {
     "DEEPSEEK_MODEL",
     "DEEPSEEK_MAX_TOKENS",
     "DEEPSEEK_TEMPERATURE",
+    "DASHSCOPE_VOICE_URL",
+    "DASHSCOPE_ASR_MODEL",
+    "DASHSCOPE_TTS_VOICE",
     "DATA_DIR",
     "LOG_DIR",
 }
+
+# 空值提交时须保留已有密钥的字段（配置页留空=不修改）
+_BLANK_PRESERVED_KEYS = {"DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY"}
 
 
 def read_env_file(path=CONFIG_PATH):
@@ -71,7 +81,7 @@ def save_config(updates, preserve_blank_api_key=True):
         if key not in updates:
             continue
         value = str(updates.get(key, "")).strip()
-        if key == "DEEPSEEK_API_KEY" and preserve_blank_api_key and not value:
+        if key in _BLANK_PRESERVED_KEYS and preserve_blank_api_key and not value:
             continue
         next_config[key] = value
 
@@ -86,6 +96,8 @@ def get_public_config(config=None):
     public = {key: config.get(key, "") for key in PUBLIC_FIELDS}
     public["DEEPSEEK_API_KEY_SET"] = bool(config.get("DEEPSEEK_API_KEY"))
     public["DEEPSEEK_API_KEY_PREVIEW"] = mask_secret(config.get("DEEPSEEK_API_KEY", ""))
+    public["DASHSCOPE_API_KEY_SET"] = bool(config.get("DASHSCOPE_API_KEY"))
+    public["DASHSCOPE_API_KEY_PREVIEW"] = mask_secret(config.get("DASHSCOPE_API_KEY", ""))
     return public
 
 

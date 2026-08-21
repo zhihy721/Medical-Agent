@@ -5,7 +5,7 @@ import time
 import uuid
 from collections import OrderedDict
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, Response, jsonify, render_template, request, session
 
 from agent.factory import create_agent, get_agent_runtime
 from config_manager import (
@@ -26,9 +26,18 @@ from observability.metrics import summarize_events
 from mcp_bridge.adapter import connect_mcp_servers, shutdown_mcp_servers
 from mcp_bridge.client import default_manager
 from tools.registry import default_registry
+import voice
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "medical-agent-demo-secret")
+# 上传体积上限：语音录音 60s webm 约 1MB，10MB 宽裕且防超大文件滥用内存
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+
+
+@app.errorhandler(413)
+def _request_too_large(error):
+    return jsonify({"ok": False, "message": "上传文件过大（上限 10MB）"}), 413
+
 
 apply_config_to_environment()
 llm = LLM(system_prompt=SYSTEM_PROMPT)
@@ -157,7 +166,7 @@ def _merged_config_for_test(payload):
     updates = _config_from_payload(payload)
     for key, value in updates.items():
         value = str(value or "").strip()
-        if key == "DEEPSEEK_API_KEY" and not value:
+        if key in {"DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY"} and not value:
             continue
         config[key] = value
     return config
@@ -200,6 +209,7 @@ def home():
 def api_config_status():
     status_data = get_config_status()
     status_data["llm_status"] = llm.get_runtime_status()
+    status_data["voice_configured"] = voice.is_configured()
     return jsonify(status_data)
 
 
@@ -209,11 +219,13 @@ def api_save_config():
         payload = request.get_json(silent=True) or {}
         config = save_config(_config_from_payload(payload), preserve_blank_api_key=True)
         _reload_runtime()
+        status_data = get_config_status(config)
+        status_data["voice_configured"] = voice.is_configured()
         return jsonify(
             {
                 "ok": True,
                 "message": "Configuration saved.",
-                "status": get_config_status(config),
+                "status": status_data,
             }
         )
     except Exception as exc:
@@ -259,6 +271,53 @@ def api_test_config():
 def api_reload_config():
     _reload_runtime()
     return jsonify({"ok": True, "status": get_config_status()})
+
+
+@app.route("/api/voice/test", methods=["POST"])
+def api_voice_test():
+    """语音连通性测试：用表单/已保存的 key 做一次短文本合成探针。"""
+    payload = request.get_json(silent=True) or {}
+    merged = _merged_config_for_test(payload)
+    api_key = merged.get("DASHSCOPE_API_KEY", "").strip()
+    if not api_key:
+        return jsonify({"ok": False, "message": "请先填写 DashScope API key 再测试语音连接"}), 400
+    ok, message = voice.test_connection(
+        api_key,
+        merged.get("DASHSCOPE_VOICE_URL", ""),
+        merged.get("DASHSCOPE_TTS_VOICE", ""),
+    )
+    return jsonify({"ok": ok, "message": message})
+
+
+@app.route("/api/voice/transcribe", methods=["POST"])
+def api_voice_transcribe():
+    """语音转文字：接收录音文件（内存处理不落盘），返回识别文本。"""
+    if not voice.is_configured():
+        return jsonify({"ok": False, "message": "语音功能未配置：请先在编辑配置中填入 DashScope API key"}), 503
+    file = request.files.get("audio")
+    if file is None or not file.filename:
+        return jsonify({"ok": False, "message": "缺少录音文件"}), 400
+    try:
+        text = voice.transcribe(file.read(), filename=file.filename, mime=file.mimetype or "audio/webm")
+        return jsonify({"ok": True, "text": text})
+    except voice.VoiceError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 502
+
+
+@app.route("/api/voice/tts", methods=["POST"])
+def api_voice_tts():
+    """文字转语音：接收助手回复文本，返回 mp3 音频字节。"""
+    if not voice.is_configured():
+        return jsonify({"ok": False, "message": "语音功能未配置：请先在编辑配置中填入 DashScope API key"}), 503
+    payload = request.get_json(silent=True) or {}
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "message": "朗读文本为空"}), 400
+    try:
+        audio = voice.synthesize(text)
+        return Response(audio, content_type="audio/mpeg")
+    except voice.VoiceError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 502
 
 
 def _conversation_messages(agent):

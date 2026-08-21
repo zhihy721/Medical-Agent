@@ -59,6 +59,16 @@ http://localhost:5000
 
 点击“保存并开始”后，配置会写入本地 `config.env`。API Key 不会在网页里明文回显。
 
+## 语音输入与朗读（可选）
+
+在「编辑配置」面板填入 DashScope API Key（阿里云百炼，有免费额度）后，网页获得语音能力：
+
+- **语音输入**：输入区「录音」按钮，点击开始录音（最长 60 秒），再次点击结束并转写为文字填入输入框，确认后再发送
+- **回复朗读**：每条助手回复带「朗读」按钮；顶栏「自动朗读」开关开启后新回复自动播放（历史回放不播）
+- 朗读音色可在配置面板选择（龙婉/龙小淳等 CosyVoice 音色）；长回复自动按句分段合成
+
+未配置 key 时语音入口保留但点击提示未配置，不影响文字问诊。语音调用走百炼 OpenAI 兼容端点（Paraformer 识别 + CosyVoice 合成），音频全程内存处理不落盘；每次调用写入 `logs/events.jsonl` 的 `voice_call` 事件。
+
 ## 常用命令
 
 启动网页但不自动打开浏览器：
@@ -132,6 +142,10 @@ DEEPSEEK_API_KEY=your_deepseek_api_key
 DEEPSEEK_MODEL=deepseek-chat
 DEEPSEEK_MAX_TOKENS=1024
 DEEPSEEK_TEMPERATURE=0.2
+DASHSCOPE_API_KEY=                     # 可选：语音识别/朗读（百炼 DashScope），也可在网页编辑配置面板填写
+DASHSCOPE_VOICE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_ASR_MODEL=paraformer-v2
+DASHSCOPE_TTS_VOICE=longwan            # 朗读音色
 DATA_DIR=data
 LOG_DIR=logs
 ```

@@ -558,6 +558,145 @@ def test_status_api_replays_messages():
     return passed
 
 
+# 语音路由测试：桩替换 voice 模块的 transcribe/synthesize/is_configured/test_connection 隔离网络，
+# 验证已配置时转写返回文本、TTS 返回音频字节，未配置时 503，空文本 400，连通性测试路由行为
+def test_voice_api_routes():
+    import io
+
+    import app as app_module
+    from config_manager import read_config
+
+    voice_module = app_module.voice
+    originals = {
+        "is_configured": voice_module.is_configured,
+        "transcribe": voice_module.transcribe,
+        "synthesize": voice_module.synthesize,
+        "test_connection": voice_module.test_connection,
+    }
+    calls = {}
+
+    def fake_transcribe(audio, filename="recording.webm", mime="audio/webm"):
+        calls["transcribe"] = {"size": len(audio), "filename": filename, "mime": mime}
+        return "我发热两天了"
+
+    def fake_synthesize(text):
+        calls["synthesize"] = text
+        return b"FAKEMP3"
+
+    client = app_module.app.test_client()
+    try:
+        # 未配置：两路由均应 503 拒绝
+        voice_module.is_configured = lambda: False
+        unconfigured_transcribe = client.post(
+            "/api/voice/transcribe",
+            data={"audio": (io.BytesIO(b"x"), "a.webm")},
+            content_type="multipart/form-data",
+        )
+        unconfigured_tts = client.post("/api/voice/tts", json={"text": "你好"})
+
+        # 已配置：桩函数生效
+        voice_module.is_configured = lambda: True
+        voice_module.transcribe = fake_transcribe
+        voice_module.synthesize = fake_synthesize
+
+        # 连通性测试路由：payload 中的 key 应透传给探针；探针失败时 ok=False
+        def fake_test_connection(api_key, base_url=None, tts_voice=None):
+            calls["test_connection"] = {"api_key": api_key, "base_url": base_url, "tts_voice": tts_voice}
+            return True, "stub 连接正常"
+
+        voice_module.test_connection = fake_test_connection
+        voice_test_ok = client.post("/api/voice/test", json={"DASHSCOPE_API_KEY": "sk-voice-test"})
+
+        voice_module.test_connection = lambda api_key, base_url=None, tts_voice=None: (False, "语音服务返回 401: invalid key")
+        voice_test_fail = client.post("/api/voice/test", json={"DASHSCOPE_API_KEY": "sk-bad"})
+
+        # 未填 key 且无已保存 key 时应 400；若环境里已有真实 key 则探针会被调用（200）
+        has_saved_voice_key = bool((read_config().get("DASHSCOPE_API_KEY") or "").strip())
+        voice_test_no_key = client.post("/api/voice/test", json={})
+
+        transcribe_resp = client.post(
+            "/api/voice/transcribe",
+            data={"audio": (io.BytesIO(b"voice-bytes"), "recording.webm")},
+            content_type="multipart/form-data",
+        )
+        transcribe_data = transcribe_resp.get_json() or {}
+
+        tts_resp = client.post("/api/voice/tts", json={"text": "建议尽快就医"})
+        empty_tts = client.post("/api/voice/tts", json={"text": "  "})
+
+        # 超过 10MB 上传上限应返回 413 JSON 而非默认 HTML 错误页
+        oversized = client.post(
+            "/api/voice/transcribe",
+            data={"audio": (io.BytesIO(b"x" * (11 * 1024 * 1024)), "big.webm")},
+            content_type="multipart/form-data",
+        )
+
+        status_data = client.get("/api/config/status").get_json() or {}
+    finally:
+        for name, func in originals.items():
+            setattr(voice_module, name, func)
+
+    checks = [
+        ("voice transcribe 503 when unconfigured", unconfigured_transcribe.status_code == 503),
+        ("voice tts 503 when unconfigured", unconfigured_tts.status_code == 503),
+        ("voice transcribe returns text", transcribe_resp.status_code == 200 and transcribe_data.get("ok") and transcribe_data.get("text") == "我发热两天了"),
+        ("voice transcribe passes audio bytes", calls.get("transcribe", {}).get("size") == len(b"voice-bytes")),
+        ("voice tts returns audio", tts_resp.status_code == 200 and tts_resp.content_type.startswith("audio/mpeg") and tts_resp.data == b"FAKEMP3"),
+        ("voice tts empty text 400", empty_tts.status_code == 400),
+        ("voice oversized upload 413", oversized.status_code == 413 and (oversized.get_json() or {}).get("ok") is False),
+        ("voice test passes payload key", voice_test_ok.status_code == 200 and (voice_test_ok.get_json() or {}).get("ok") is True and calls.get("test_connection", {}).get("api_key") == "sk-voice-test"),
+        ("voice test reports failure", voice_test_fail.status_code == 200 and (voice_test_fail.get_json() or {}).get("ok") is False),
+        ("voice test requires key", voice_test_no_key.status_code == (200 if has_saved_voice_key else 400)),
+        ("config status exposes voice_configured", status_data.get("voice_configured") is True),
+    ]
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
+# TTS 长文本分段：CosyVoice 单次输入约 500 字符上限，超长按句边界分段合成后拼接；
+# 纯函数断言分段边界与文本完整性，再桩替换 _synthesize_chunk 验证 synthesize 的拼接行为
+def test_voice_tts_chunking():
+    import voice as voice_module
+
+    long_text = "。".join(["症状描述内容" * 40] * 4) + "。"
+    chunks = voice_module._split_for_tts(long_text)
+    checks = [
+        ("chunks respect limit", bool(chunks) and all(len(c) <= voice_module.TTS_CHUNK_LIMIT for c in chunks)),
+        ("chunks preserve text", "".join(chunks) == long_text.strip()),
+        ("short text single chunk", voice_module._split_for_tts("短文本") == ["短文本"]),
+        ("empty text no chunks", voice_module._split_for_tts("  ") == []),
+    ]
+
+    calls = []
+    original_chunk = voice_module._synthesize_chunk
+    voice_module._synthesize_chunk = lambda text: (calls.append(text), b"A")[1]
+    try:
+        audio = voice_module.synthesize(long_text)
+    finally:
+        voice_module._synthesize_chunk = original_chunk
+
+    checks.extend([
+        ("synthesize splits long text", len(calls) == len(chunks) and len(calls) > 1),
+        ("synthesize concatenates audio", audio == b"A" * len(calls)),
+    ])
+
+    passed = True
+    for label, ok in checks:
+        if ok:
+            print(f"[PASS] {label}")
+        else:
+            passed = False
+            print(f"[FAIL] {label}")
+    return passed
+
+
 # 测试对话总结和未决问题的生成逻辑，验证当用户提供了新的症状信息后
 # 系统能够正确总结当前对话内容，提取已确认的症状信息，并生成针对性的未决问题列表
 def test_conversation_summary_and_open_questions():
@@ -2343,6 +2482,8 @@ def main():
         test_manual_profile_save_and_prefill(),
         test_profile_api_roundtrip(),
         test_status_api_replays_messages(),
+        test_voice_api_routes(),
+        test_voice_tts_chunking(),
         test_conversation_summary_and_open_questions(),
         test_langgraph_runtime_smoke(),
         test_langgraph_high_risk_escalation(),
