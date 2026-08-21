@@ -176,6 +176,21 @@
             grid-column: 1 / -1;
         }
 
+        .field-with-action {
+            display: flex;
+            gap: 8px;
+            align-items: stretch;
+        }
+
+        .field-with-action input {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .field-with-action button {
+            flex-shrink: 0;
+        }
+
         label {
             color: #344054;
             font-size: 13px;
@@ -319,7 +334,7 @@
         .composer-row {
             display: grid;
             gap: 10px;
-            grid-template-columns: minmax(0, 1fr) auto auto;
+            grid-template-columns: minmax(0, 1fr) auto auto auto;
         }
 
         .side {
@@ -511,6 +526,53 @@
             40% { opacity: 1; }
         }
 
+        .speak-btn {
+            background: none;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 8px;
+            min-height: auto;
+            padding: 1px 8px;
+        }
+
+        .speak-btn.playing {
+            border-color: var(--primary);
+            color: var(--primary-dark);
+        }
+
+        .mic-btn.recording {
+            animation: pulse 1.2s infinite;
+            background: var(--danger);
+            border-color: var(--danger);
+            color: #fff;
+        }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(200, 60, 40, 0.35); }
+            50% { box-shadow: 0 0 0 6px rgba(200, 60, 40, 0); }
+        }
+
+        .auto-read {
+            align-items: center;
+            color: var(--muted);
+            display: flex;
+            font-size: 13px;
+            gap: 6px;
+        }
+
+        .voice-toast {
+            background: #fff7e6;
+            border: 1px solid #f0d9a8;
+            border-radius: 8px;
+            color: #8a6116;
+            font-size: 13px;
+            margin: 10px 18px 0;
+            padding: 8px 12px;
+        }
+
         .chip-input {
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -596,6 +658,10 @@
                 <span>本地智能问诊演示</span>
             </div>
             <div class="topbar-actions">
+                <label class="auto-read" title="开启后助手的新回复将自动朗读">
+                    <input id="auto-read-toggle" type="checkbox">
+                    <span>自动朗读</span>
+                </label>
                 <button id="edit-config-btn" class="secondary">编辑配置</button>
                 <div id="global-status" class="status-pill">
                     <span class="dot off"></span>
@@ -629,6 +695,23 @@
                     <label for="api-key">API Key</label>
                     <input id="api-key" type="password" autocomplete="off" placeholder="填入新的 API key，留空则保留已有配置">
                 </div>
+                <div class="field full">
+                    <label for="dashscope-api-key">DashScope API Key（语音识别/合成）</label>
+                    <div class="field-with-action">
+                        <input id="dashscope-api-key" type="password" autocomplete="off" placeholder="填入 DashScope API key，留空则保留已有配置">
+                        <button id="test-voice-btn" class="secondary" type="button">测试语音</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="dashscope-tts-voice">朗读音色</label>
+                    <select id="dashscope-tts-voice">
+                        <option value="longwan">龙婉（温柔女声）</option>
+                        <option value="longxiaochun">龙小淳（知性女声）</option>
+                        <option value="longxiaobai">龙小白（活泼女声）</option>
+                        <option value="longshu">龙书（沉稳男声）</option>
+                        <option value="longlaotie">老铁（东北男声）</option>
+                    </select>
+                </div>
                 <div class="field">
                     <label for="max-tokens">Max Tokens</label>
                     <input id="max-tokens" type="number" min="1" step="1" value="512">
@@ -643,6 +726,7 @@
                 <button id="test-config-btn" class="secondary">测试连接</button>
                 <button id="save-config-btn" class="primary">保存并开始</button>
                 <button id="mock-mode-btn" class="secondary">使用 Mock 模式</button>
+                <button id="cancel-config-btn" class="secondary">取消</button>
             </div>
             <div id="setup-message" class="notice info hidden"></div>
         </section>
@@ -655,6 +739,7 @@
                 </div>
 
                 <div id="risk-banner" class="risk-banner hidden">当前风险等级：高。建议尽快就医；若症状剧烈或持续加重，请直接前往急诊。</div>
+                <div id="voice-toast" class="voice-toast hidden"></div>
 
                 <div id="chat-messages" class="messages">
                     <div class="message bot">
@@ -676,6 +761,7 @@
                     <div class="composer-row">
                         <input id="message-input" type="text" maxlength="500" placeholder="例如：我发烧两天了，还咳嗽，胸口有点闷">
                         <button id="send-btn" class="primary">发送</button>
+                        <button id="mic-btn" class="secondary" type="button" title="点击开始录音，再次点击结束">录音</button>
                         <button id="reset-btn" class="secondary">重置</button>
                     </div>
                 </div>
@@ -799,12 +885,22 @@
             globalStatus.querySelector("span:last-child").textContent = text;
         }
 
+        let setupClosable = false;
+
         function showSetup(message = "") {
             setupView.classList.remove("hidden");
             appView.classList.add("hidden");
+            setupClosable = Boolean(message);
+            document.getElementById("cancel-config-btn").classList.toggle("hidden", !setupClosable);
             if (message) {
                 showSetupMessage(message, "info");
             }
+        }
+
+        function hideSetup() {
+            if (!setupClosable) return;
+            setupView.classList.add("hidden");
+            appView.classList.remove("hidden");
         }
 
         function showApp() {
@@ -830,6 +926,12 @@
             apiKeyInput.placeholder = config.DEEPSEEK_API_KEY_SET
                 ? `已保存 ${config.DEEPSEEK_API_KEY_PREVIEW}，留空则不修改`
                 : "填入 DeepSeek API key";
+            const dashscopeKeyInput = document.getElementById("dashscope-api-key");
+            dashscopeKeyInput.value = "";
+            dashscopeKeyInput.placeholder = config.DASHSCOPE_API_KEY_SET
+                ? `已保存 ${config.DASHSCOPE_API_KEY_PREVIEW}，留空则不修改`
+                : "填入 DashScope API key（用于语音输入/朗读）";
+            document.getElementById("dashscope-tts-voice").value = config.DASHSCOPE_TTS_VOICE || "longwan";
             updateProviderFields();
         }
 
@@ -841,6 +943,8 @@
                 DEEPSEEK_MODEL: modelInput.value.trim(),
                 DEEPSEEK_MAX_TOKENS: maxTokensInput.value,
                 DEEPSEEK_TEMPERATURE: temperatureInput.value,
+                DASHSCOPE_API_KEY: document.getElementById("dashscope-api-key").value.trim(),
+                DASHSCOPE_TTS_VOICE: document.getElementById("dashscope-tts-voice").value,
                 ...overrides
             };
         }
@@ -849,6 +953,10 @@
             const response = await fetch("/api/config/status");
             const status = await response.json();
             fillConfigForm(status);
+            if (typeof status.voice_configured === "boolean") {
+                voiceReady = status.voice_configured;
+                updateVoiceUi();
+            }
 
             if (status.configured) {
                 setGlobalStatus(
@@ -877,6 +985,27 @@
             } catch (error) {
                 showSetupMessage("连接测试失败，请检查网络或 API 配置。", "error");
             } finally {
+                setButtonsDisabled(false);
+            }
+        }
+
+        async function testVoice() {
+            const voiceBtn = document.getElementById("test-voice-btn");
+            setButtonsDisabled(true);
+            voiceBtn.disabled = true;
+            showSetupMessage("正在测试语音连接（会合成一段 4 字短音频）...", "info");
+            try {
+                const response = await fetch("/api/voice/test", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(getConfigPayload())
+                });
+                const data = await response.json();
+                showSetupMessage(data.message || (data.ok ? "语音连接可用" : "语音连接失败"), data.ok ? "info" : "error");
+            } catch (error) {
+                showSetupMessage("语音连接测试失败，请检查网络或服务状态。", "error");
+            } finally {
+                voiceBtn.disabled = false;
                 setButtonsDisabled(false);
             }
         }
@@ -926,6 +1055,16 @@
             const time = new Date().toTimeString().slice(0, 5);
             label.textContent = type === "user" ? `User · ${time}` : `Medical Agent · ${time}`;
 
+            if (type === "bot") {
+                const speakBtn = document.createElement("button");
+                speakBtn.className = "speak-btn";
+                speakBtn.type = "button";
+                speakBtn.textContent = "朗读";
+                speakBtn.title = "朗读这条回复";
+                speakBtn.addEventListener("click", () => playTts(text, speakBtn));
+                label.appendChild(speakBtn);
+            }
+
             const content = document.createElement("div");
             content.textContent = text;
 
@@ -945,6 +1084,183 @@
             }
             messages.forEach(item => addMessage(item.content, item.role === "user" ? "user" : "bot"));
         }
+
+        // ---------- 语音输入/输出：录音转写 + 助手回复朗读 ----------
+        const micBtn = document.getElementById("mic-btn");
+        const autoReadToggle = document.getElementById("auto-read-toggle");
+        let voiceReady = false;        // 后端已配置 DASHSCOPE_API_KEY
+        let recorder = null;
+        let recordStream = null;
+        let recordTimer = null;
+        let recordSeconds = 0;
+        let ttsAudio = null;
+        let ttsPlayingBtn = null;
+        let ttsBlobUrl = null;
+
+        autoReadToggle.checked = localStorage.getItem("autoRead") === "1";
+        autoReadToggle.addEventListener("change", () => {
+            localStorage.setItem("autoRead", autoReadToggle.checked ? "1" : "0");
+        });
+
+        function updateVoiceUi() {
+            micBtn.title = voiceReady
+                ? "点击开始录音，再次点击结束并转写为文字"
+                : "语音功能未配置：请在编辑配置中填入 DashScope API key";
+        }
+        updateVoiceUi();
+
+        function showVoiceToast(text) {
+            const toast = document.getElementById("voice-toast");
+            toast.textContent = text;
+            toast.classList.remove("hidden");
+            clearTimeout(showVoiceToast._handle);
+            showVoiceToast._handle = setTimeout(() => toast.classList.add("hidden"), 3000);
+        }
+
+        async function toggleRecording() {
+            if (!voiceReady) {
+                showVoiceToast("语音功能未配置：请在「编辑配置」中填入 DashScope API key");
+                return;
+            }
+            if (recorder) {
+                recorder.stop();
+                return;
+            }
+            if (!navigator.mediaDevices || !window.MediaRecorder) {
+                showVoiceToast("当前浏览器不支持录音");
+                return;
+            }
+            try {
+                recordStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (error) {
+                showVoiceToast("麦克风权限被拒绝，请允许后重试");
+                return;
+            }
+            recorder = new MediaRecorder(recordStream);
+            const chunks = [];
+            recorder.ondataavailable = (event) => {
+                if (event.data.size) {
+                    chunks.push(event.data);
+                }
+            };
+            recorder.onstop = () => {
+                const mime = recorder.mimeType || "audio/webm";
+                recorder = null;
+                stopRecordingUi();
+                recordStream.getTracks().forEach(track => track.stop());
+                recordStream = null;
+                transcribeBlob(new Blob(chunks, { type: mime }));
+            };
+            recorder.start();
+            startRecordingUi();
+        }
+
+        function startRecordingUi() {
+            recordSeconds = 0;
+            micBtn.classList.add("recording");
+            micBtn.textContent = "■ 0秒";
+            recordTimer = setInterval(() => {
+                recordSeconds += 1;
+                micBtn.textContent = `■ ${recordSeconds}秒`;
+                // 单次录音上限 60 秒，自动停止并转写
+                if (recordSeconds >= 60 && recorder) {
+                    recorder.stop();
+                }
+            }, 1000);
+        }
+
+        function stopRecordingUi() {
+            clearInterval(recordTimer);
+            recordTimer = null;
+            micBtn.classList.remove("recording");
+            micBtn.textContent = "录音";
+        }
+
+        async function transcribeBlob(blob) {
+            micBtn.textContent = "转写中…";
+            micBtn.disabled = true;
+            const form = new FormData();
+            form.append("audio", blob, "recording.webm");
+            try {
+                const response = await fetch("/api/voice/transcribe", { method: "POST", body: form });
+                const data = await response.json();
+                if (data.ok && data.text) {
+                    messageInput.value = data.text;
+                    messageInput.focus();
+                } else {
+                    showVoiceToast(data.message || "语音转写失败");
+                }
+            } catch (error) {
+                showVoiceToast("语音转写失败：网络异常");
+            } finally {
+                micBtn.disabled = false;
+                micBtn.textContent = "录音";
+            }
+        }
+
+        function stopTts() {
+            if (ttsAudio) {
+                ttsAudio.pause();
+                ttsAudio = null;
+            }
+            if (ttsBlobUrl) {
+                URL.revokeObjectURL(ttsBlobUrl);
+                ttsBlobUrl = null;
+            }
+            if (ttsPlayingBtn) {
+                ttsPlayingBtn.textContent = "朗读";
+                ttsPlayingBtn.classList.remove("playing");
+                ttsPlayingBtn = null;
+            }
+        }
+
+        async function playTts(text, btn) {
+            if (!voiceReady) {
+                showVoiceToast("语音功能未配置：请在「编辑配置」中填入 DashScope API key");
+                return;
+            }
+            // 全局单播放器：点击正在播放的按钮即停止；切换新文本先停旧的
+            if (ttsPlayingBtn === btn && ttsAudio) {
+                stopTts();
+                return;
+            }
+            stopTts();
+            if (btn) {
+                btn.textContent = "加载中…";
+            }
+            try {
+                const response = await fetch("/api/voice/tts", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ text })
+                });
+                if (!response.ok) {
+                    const data = await response.json().catch(() => ({}));
+                    showVoiceToast(data.message || "语音合成失败");
+                    if (btn) {
+                        btn.textContent = "朗读";
+                    }
+                    return;
+                }
+                const blob = await response.blob();
+                ttsBlobUrl = URL.createObjectURL(blob);
+                ttsAudio = new Audio(ttsBlobUrl);
+                ttsPlayingBtn = btn || null;
+                if (btn) {
+                    btn.textContent = "停止";
+                    btn.classList.add("playing");
+                }
+                ttsAudio.onended = stopTts;
+                await ttsAudio.play();
+            } catch (error) {
+                showVoiceToast("语音合成失败：网络异常");
+                if (btn) {
+                    btn.textContent = "朗读";
+                }
+            }
+        }
+
+        micBtn.addEventListener("click", toggleRecording);
 
         // 思考中指示：LLM 调用常达数秒，气泡内每秒计时避免用户误以为卡死
         let thinkingHandle = null;
@@ -1317,6 +1633,13 @@
                 if (Array.isArray(data.messages)) {
                     // 以服务端历史整体回放，保证与持久化状态一致
                     renderMessages(data.messages);
+                    // 自动朗读：仅对新到达的最新助手回复生效，回放历史不播
+                    if (autoReadToggle.checked && voiceReady && data.messages.length) {
+                        const last = data.messages[data.messages.length - 1];
+                        if (last.role !== "user" && last.content) {
+                            playTts(last.content, null);
+                        }
+                    }
                 } else {
                     addMessage(data.response || "系统没有返回内容。", "bot");
                 }
@@ -1343,9 +1666,30 @@
         }
 
         document.getElementById("test-config-btn").addEventListener("click", testConfig);
+        document.getElementById("test-voice-btn").addEventListener("click", testVoice);
         document.getElementById("save-config-btn").addEventListener("click", () => saveConfig());
         document.getElementById("mock-mode-btn").addEventListener("click", () => saveConfig({ LLM_PROVIDER: "mock" }));
-        document.getElementById("edit-config-btn").addEventListener("click", () => showSetup("可以更新配置，留空 API key 会保留当前密钥。"));
+        document.getElementById("edit-config-btn").addEventListener("click", async () => {
+            try {
+                const response = await fetch("/api/config/status");
+                fillConfigForm(await response.json());
+            } catch (error) {
+                // 拉取失败时保留表单当前值，不阻断打开面板
+            }
+            showSetup("可以更新配置，留空 API key 会保留当前密钥。");
+        });
+        document.getElementById("cancel-config-btn").addEventListener("click", hideSetup);
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !setupView.classList.contains("hidden")) {
+                hideSetup();
+            }
+        });
+        document.querySelector("main.shell").addEventListener("click", (event) => {
+            if (setupView.classList.contains("hidden")) return;
+            if (setupView.contains(event.target)) return;
+            if (event.target.closest("#edit-config-btn")) return;
+            hideSetup();
+        });
 
         document.getElementById("trace-toggle-btn").addEventListener("click", () => {
             const timeline = document.getElementById("trace-timeline");
