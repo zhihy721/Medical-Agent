@@ -1,0 +1,17 @@
+{
+  "name": "medical-agent-desktop",
+  "productName": "Medical Agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "L2 desktop client for an existing Medical-Agent Python workspace",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test_lifecycle.cjs test_ui.cjs",
+    "package": "node package.cjs"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "@electron/packager": "20.3.0"
+  }
+}

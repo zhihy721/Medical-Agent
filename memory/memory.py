@@ -102,6 +102,8 @@ class ConversationMemory:
         # memory分成两层：profile长期和session短期
         self.profile_store = profile_store or InMemoryProfileStore()
         self.session_store = session_store or InMemorySessionStore()
+        if hasattr(self.session_store, 'register_session'):
+            self.session_store.register_session(self.session_id, self.user_id)
         # 读取历史，如果有旧会话，就恢复
         self.history = self.session_store.get_history(self.session_id, [])
         # 初始化用户画像，如果没有，就创建默认
@@ -180,19 +182,35 @@ class ConversationMemory:
     # 3. 更新摘要
     # 4. 持久化
     def add_user(self, text):
+        if hasattr(self.session_store, 'append_message'):
+            self.session_store.append_message(self.session_id, 'user', text)
         self.history.append(("user", text))
         self._trim_history()
         self._refresh_conversation_memory()
         self._persist_session_state()
 
     def add_assistant(self, text):
+        if hasattr(self.session_store, 'append_message'):
+            self.session_store.append_message(self.session_id, 'assistant', text)
         self.history.append(("assistant", text))
         self._trim_history()
         self._refresh_conversation_memory()
         self._persist_session_state()
 
+    def amend_last_assistant(self, expected, text):
+        """Append bounded tool information to the same completed safety reply."""
+        if not self.history or self.history[-1] != ('assistant', expected):
+            raise ValueError('assistant history changed during tool enrichment')
+        if hasattr(self.session_store, 'amend_last_assistant'):
+            self.session_store.amend_last_assistant(self.session_id, expected, text)
+        self.history[-1] = ('assistant', text)
+        self._refresh_conversation_memory()
+        self._persist_session_state()
+
     # 核心更新函数
     def update_case(self, extracted_slots):
+        if self.case_state.get('semantic_contract'):
+            raise ValueError('legacy slot merge is disabled for a semantic session')
         # LIST字段处理
         # 旧+新，合并去重，累积信息
         for field in self.LIST_FIELDS:
@@ -216,10 +234,107 @@ class ConversationMemory:
         self._refresh_conversation_memory()
         self._persist_session_state()
 
+    def enable_fact_mode(self, contract_version=None, *, representation_policy=None):
+        from memory.fact_ledger_runtime import empty_ledger, update_profile
+        from llm.fact_contract import VERSION
+        contract_version = contract_version or VERSION
+        from llm.fact_contract_runtime import V2
+        from llm.fact_lexical_policy import VERSION as POLICY_VERSION, ALIAS_VERSION
+        from llm.fact_projection_policy import VERSION as V5, ALIAS_VERSION as V5_ALIASES
+        if representation_policy not in {None, POLICY_VERSION,V5} or (representation_policy and contract_version != V2):
+            raise ValueError('unsupported session representation policy')
+        if 'fact_ledger' in self.case_state:
+            if self.case_state['fact_ledger']['contract_version'] != contract_version:
+                raise ValueError('existing session contract differs; start a new session')
+            if self.case_state['fact_ledger'].get('representation_policy_version') != representation_policy:
+                raise ValueError('existing session representation policy differs; start a new session')
+            return
+        if self.history or self.case_state.get('symptoms') or self.case_state.get('red_flags'):
+            raise ValueError('semantic extraction requires a new session; old evidence has no provenance')
+        profile = self.get_long_term_profile()
+        fields = {f: profile.get(f, [] if f in self.PROFILE_LIST_FIELDS else '')
+                  for f in self.PROFILE_SCALAR_FIELDS + self.PROFILE_LIST_FIELDS}
+        ledger = empty_ledger(interpretation=True, contract_version=contract_version)
+        if representation_policy:
+            ledger.update(representation_policy_version=representation_policy,
+                normalization_version=V5_ALIASES if representation_policy==V5 else ALIAS_VERSION)
+        self.commit_fact_ledger(update_profile(ledger, fields, 'profile_prefill'))
+
+    def enable_runtime_fact_projection(self, version):
+        from memory.runtime_fact_projection import VERSION
+        if version != VERSION or 'fact_ledger' not in self.case_state:
+            raise ValueError('projection requires supported version and fact mode')
+        self.case_state['runtime_fact_projection_version'] = version
+        self.commit_fact_ledger(self.case_state['fact_ledger'])
+
+    def fact_input(self, text):
+        from memory.fact_ledger_runtime import next_input
+        return next_input(self.case_state['fact_ledger'], text,
+                          self.case_state.get('semantic_last_question', ''), self.case_state.get('current_focus'))
+
+    def apply_fact_delta(self, inp, delta, model_result=None, extraction_policy_trace=None):
+        from memory.fact_ledger_runtime import apply_delta
+        ledger = apply_delta(self.case_state['fact_ledger'], inp, delta)
+        ledger['turns'][-1]['model_result'] = deepcopy(model_result)
+        if extraction_policy_trace is not None:
+            ledger['turns'][-1]['extraction_policy_trace'] = deepcopy(extraction_policy_trace)
+        self.commit_fact_ledger(ledger)
+
+    def commit_fact_ledger(self, ledger):
+        from memory.fact_view import case_projection
+        projection = case_projection(ledger, self.case_state)
+        self.case_state.update(projection)
+        self.case_state['fact_ledger'] = ledger
+        self.case_state['summary'] = self._build_summary()
+        self.case_state['tcm_summary'] = self._build_tcm_summary()
+        self._refresh_conversation_memory()
+        self._persist_session_state()
+
+    def record_fact_failure(self, text, inp, error, model_result=None, extraction_policy_trace=None):
+        ledger = deepcopy(self.case_state['fact_ledger'])
+        ledger['turns'].append({'input': deepcopy(inp), 'current_turn': text,
+                               'raw_delta': None, 'error': error, 'model_result': deepcopy(model_result)})
+        if extraction_policy_trace is not None:
+            ledger['turns'][-1]['extraction_policy_trace'] = deepcopy(extraction_policy_trace)
+        self.commit_fact_ledger(ledger)
+        self.case_state['fact_extraction_error'] = error
+        self.case_state['contradictions'] = ['本轮信息未能可靠解析，请重新描述。']
+        self.case_state['contradiction_fields'] = []
+        self._persist_session_state()
+
+    def set_fact_question(self, text):
+        self.case_state['semantic_last_question'] = text
+        self._persist_session_state()
+
+    def apply_complaint_intent(self, audit):
+        events = self.case_state.setdefault('complaint_intent_history', [])
+        events.append(deepcopy(audit))
+        selected = list(self.case_state.get('complaint_intent_selected', []))
+        if audit['status'] == 'ok':
+            for event in audit['events']:
+                selected = [i for i in selected if i['problem_id'] != event['problem_id']]
+                if event['operation'] == 'select':
+                    selected.append({**event, 'source_turn': len(self.case_state['fact_ledger']['turns'])})
+        self.case_state['complaint_intent_selected'] = selected
+        self.case_state['intent_status'] = audit['status']
+        if audit['status'] == 'ok':
+            self.commit_fact_ledger(self.case_state['fact_ledger'])
+        else:
+            self._persist_session_state()
+
     # 更新浏览器定位坐标：仅存会话状态供就近医院检索用，
     # 不进槽位历史/矛盾检测，也不写入长期画像
     def update_user_coords(self, latitude, longitude):
         self.case_state["user_coords"] = {"latitude": latitude, "longitude": longitude}
+        self._persist_session_state()
+
+    def update_tool_location(self, city, *, source='user_setting'):
+        """Explicit external tool context; never manufactured patient evidence."""
+        if source not in {'user_setting', 'evaluation_fixture'}:
+            raise ValueError('unsupported external location source')
+        if not isinstance(city, str) or len(city.strip()) > 100:
+            raise ValueError('invalid external city')
+        self.case_state['tool_location'] = {'city': city.strip(), 'source': source}
         self._persist_session_state()
 
     # 手填基本信息的专用通道：表单内容直接写入长期画像并同步当前会话
@@ -244,6 +359,13 @@ class ConversationMemory:
         profile["profile_summary"] = self._build_profile_summary(profile)
         self.profile_store.set_profile(self.user_id, profile)
 
+        if self.case_state.get('semantic_contract'):
+            from memory.fact_ledger_runtime import update_profile
+            supplied = {f: profile[f] for f in fields
+                        if f in self.PROFILE_SCALAR_FIELDS + self.PROFILE_LIST_FIELDS}
+            self.commit_fact_ledger(update_profile(self.case_state['fact_ledger'], supplied))
+            return profile
+
         # 同步当前会话 case_state，同样覆盖语义，让风险评估/追问立即生效
         for field in self.PROFILE_SCALAR_FIELDS:
             if profile.get(field):
@@ -256,6 +378,8 @@ class ConversationMemory:
 
     # 画像预填：仅当 case_state 字段为空时从长期画像回填，不写 slot_history
     def _prefill_case_state_from_profile(self):
+        if self.case_state.get('semantic_contract'):
+            return  # Restored ledger owns its sourced facts, including corrections.
         profile = self.get_long_term_profile()
         changed = False
         for field in self.PROFILE_SCALAR_FIELDS:
@@ -282,7 +406,13 @@ class ConversationMemory:
             "pulse_candidates": pulse_data.get("pulse_candidates", []),
         }
         self.case_state["pulse_declined"] = False
-        self.update_case(normalized)
+        if self.case_state.get('semantic_contract'):
+            self.case_state.update(normalized)
+            self.case_state['tcm_summary'] = self._build_tcm_summary()
+            self._refresh_conversation_memory()
+            self._persist_session_state()
+        else:
+            self.update_case(normalized)
 
     # 更新风险评估和分诊状态
     # 控制问诊流程
@@ -310,6 +440,11 @@ class ConversationMemory:
             counts[followup_slot] = counts.get(followup_slot, 0) + 1
             self.case_state["followup_counts"] = counts
             self.case_state["last_followup_slot"] = followup_slot
+            if self.case_state.get('semantic_contract'):
+                from llm.fact_contract import ATTRIBUTES
+                if followup_slot in ATTRIBUTES and self.case_state.get('current_focus'):
+                    scoped = self.case_state.setdefault('problem_followup_counts', {})
+                    scoped.setdefault(self.case_state['current_focus'], {})[followup_slot] = counts[followup_slot]
         self._persist_session_state()
 
     # Agent认知状态
@@ -410,10 +545,13 @@ class ConversationMemory:
     def get_prompt_context_text(self):
         summary = self.case_state.get("conversation_summary", "当前还缺少足够的问诊上下文。")
         recent_history = self.history[-self.prompt_history_window :]
-        recent_text = "\n".join(f"{role}: {text}" for role, text in recent_history)
-        if recent_text:
-            return f"summary: {summary}\nrecent_history:\n{recent_text}"
-        return f"summary: {summary}"
+        from memory.context_window import build_context
+        return build_context(summary, recent_history)['text']
+
+    def get_archived_messages(self):
+        if hasattr(self.session_store, 'get_messages'):
+            return self.session_store.get_messages(self.session_id)
+        return [dict(role=role, content=content) for role, content in self.history]
 
     # 限制历史长度，避免内存无限增长，同时保证提供足够的上下文给LLM
     def _trim_history(self):
@@ -493,6 +631,7 @@ class ConversationMemory:
             "age": "年龄信息前后不一致",
             "sex": "性别信息前后不一致",
             "severity": "严重程度描述前后不一致",
+            "duration": "病程描述前后不一致",
         }
 
         slot_history = self.case_state.get("slot_history", {})
@@ -553,6 +692,9 @@ class ConversationMemory:
 
     # 持久化当前会话状态，包括对话历史和case_state，保证数据不丢失，并支持后续恢复和分析
     def _persist_session_state(self):
+        if hasattr(self.session_store, 'save_snapshot'):
+            self.session_store.save_snapshot(self.session_id, self.history, self.case_state)
+            return
         self.session_store.set_history(self.session_id, self.history)
         self.session_store.set_case_state(self.session_id, self.case_state)
 

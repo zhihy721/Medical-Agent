@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/medical-agent/scenario-v1.schema.json",
+  "title": "Medical-Agent fictional evaluation scenario v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scenario_id", "family_id", "origin", "policy_version", "split", "review_status", "tags", "turns"],
+  "properties": {
+    "scenario_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{2,79}$"},
+    "family_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{2,79}$"},
+    "template_id": {"type": "string"},
+    "origin": {"enum": ["fictional_manual", "fictional_template", "fictional_teacher_rewrite"]},
+    "policy_version": {"const": "v1"},
+    "split": {"enum": ["dev", "holdout"]},
+    "review_status": {"enum": ["draft", "reviewed", "disputed"]},
+    "reviewed_by": {"type": "string"},
+    "reviewed_at": {"type": "string", "format": "date"},
+    "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "notes": {"type": "string"},
+    "initial_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "age": {"type": "string"}, "sex": {"type": "string"},
+        "past_history": {"$ref": "#/$defs/stringArray"},
+        "allergy_history": {"$ref": "#/$defs/stringArray"},
+        "medication_history": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "initial_session_state": {"type": "object"},
+    "input_channel": {"enum": ["text", "asr_text"]},
+    "location_fixture": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["latitude", "longitude"],
+      "properties": {
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180}
+      }
+    },
+    "tool_fixture_id": {"enum": ["none", "hospital_empty", "hospital_demo", "hospital_error"]},
+    "turns": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/turn"}}
+  },
+  "$defs": {
+    "stringArray": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "mention": {
+      "type": "object", "additionalProperties": false,
+      "required": ["field", "value", "polarity", "evidence", "turn_id", "start", "end"],
+      "properties": {
+        "field": {"enum": ["chief_complaint", "symptoms", "accompanying_symptoms", "duration", "severity", "location", "city", "age", "sex", "past_history", "allergy_history", "medication_history", "red_flags", "cold_heat", "sweating", "thirst", "appetite", "sleep", "stool_urine", "pain_character", "emotion", "complexion", "voice_breath", "odor", "female_cycle"]},
+        "value": {"type": "string", "minLength": 1},
+        "polarity": {"enum": ["present", "negated", "uncertain"]},
+        "evidence": {"type": "string", "minLength": 1},
+        "turn_id": {"type": "integer", "minimum": 1},
+        "start": {"type": "integer", "minimum": 0},
+        "end": {"type": "integer", "minimum": 1},
+        "operation": {"enum": ["add", "correct", "deny"]}
+      }
+    },
+    "turn": {
+      "type": "object", "additionalProperties": false,
+      "required": ["user", "gold_extract", "gold_policy"],
+      "properties": {
+        "user": {"type": "string", "minLength": 1},
+        "gold_extract": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mentions"],
+          "properties": {"mentions": {"type": "array", "items": {"$ref": "#/$defs/mention"}}}
+        },
+        "gold_policy": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "risk": {"enum": ["HIGH", "MEDIUM", "LOW", "UNKNOWN"]},
+            "allowed_actions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["risk_escalation", "clarify_conflict", "ask_followup_single", "ask_followup_bundle", "summarize_progress", "request_pulse_input", "final_advice"]}}
+          }
+        },
+        "notes": {"type": "string"},
+        "pulse_data": {"type": "object"}
+      }
+    }
+  }
+}

@@ -118,11 +118,17 @@ def merge_extracted_slots(rule_result, llm_result):
 
 # 判断用户是否跳过了脉诊输入
 def handle_post_pulse_reply(memory, user_input):
+    import re
     case_state = memory.get_case_state()
+    text = (user_input or "").strip()
+    # An explicit standalone preference is valid before a pulse invitation.
+    # Do not infer refusal from a quote, hypothetical or a negated refusal.
+    if re.search(r'(?:^|[，。；,;])\s*(?:我)?(?:不做脉诊|不测脉搏|先不测脉搏|不想做脉诊)(?=$|[，。；,;])', text):
+        memory.mark_pulse_skipped()
+        return
     if case_state.get("last_action") != "request_pulse_input":
         return
 
-    text = (user_input or "").strip()
     if not text:
         return
 
@@ -221,7 +227,7 @@ def deserialize_action_result(action_result_payload):
 
 # 高风险分诊升级的结果构建
 # 安全优先级>中医辨证
-def build_risk_escalation_action_result(case_state, risk_result, guideline_result, plan):
+def build_risk_escalation_action_result(case_state, risk_result, guideline_result, plan, *, include_hospitals=True):
     from agent.router import ActionResult
 
     symptoms = "、".join(case_state.get("symptoms", [])) or "当前症状"
@@ -237,8 +243,9 @@ def build_risk_escalation_action_result(case_state, risk_result, guideline_resul
     # 外部知识库增强，提供一些常见的高风险症状组合和处理建议，帮助用户理解风险的具体表现和应对措施
     for advice in guideline_result.get("advice", []):
         lines.append(f"- {advice}")
-    # MCP 可选增强：附加附近医院清单；无位置来源、工具不可用或调用失败均静默跳过
-    lines.extend(_nearby_hospital_lines(case_state))
+    # MCP 可选增强：位置缺失跳过；已调用而失败则明确提示，不阻断安全分诊。
+    if include_hospitals:
+        lines.extend(_nearby_hospital_lines(case_state))
 
     return ActionResult(
         name="risk_escalation",
@@ -251,7 +258,7 @@ def build_risk_escalation_action_result(case_state, risk_result, guideline_resul
 
 # 高风险升级回复的附近医院建议：仅当 hospital_locator MCP 工具已注册且有位置来源时附加
 # 位置优先级：浏览器定位坐标（user_coords，工具侧需高德 key） > 会话抽取的城市（city 槽位）
-#            > MEDICAL_AGENT_LOCATION 环境变量（手动覆盖）
+#            > 显式外部地点设置（不参与患者事实投影） > MEDICAL_AGENT_LOCATION
 def _nearby_hospital_lines(case_state):
     import os
 
@@ -260,7 +267,16 @@ def _nearby_hospital_lines(case_state):
     tool = default_registry.get("hospital_locator_search_nearby_hospitals")
     if tool is None:
         return []
-    city = (case_state.get("city") or "").strip() or os.getenv("MEDICAL_AGENT_LOCATION", "").strip()
+    external = case_state.get('tool_location') or {}
+    external_city = external.get('city', '') if external.get('source') in {'user_setting','evaluation_fixture'} else ''
+    city = ((case_state.get("city") or "").strip() or external_city.strip()
+            or os.getenv("MEDICAL_AGENT_LOCATION", "").strip())
+    # A current explicit denial must not resurrect a stale external city setting.
+    denied_cities = {f['value'] for f in (case_state.get('fact_view') or {}).get('facts', [])
+        if f.get('field')=='city' and f.get('polarity')=='negated'
+        and f.get('subject')=='patient' and f.get('temporality')=='current'}
+    if city in denied_cities:
+        city = ''
     kwargs = {"location": city}
     coords = case_state.get("user_coords") or {}
     try:
@@ -272,11 +288,14 @@ def _nearby_hospital_lines(case_state):
         pass
     if not city and "latitude" not in kwargs:
         return []
-    result = tool(**kwargs)
-    if result.get("status") != "ok":
-        return []
-    data = result.get("data") or {}
-    hospitals = data.get("hospitals") or []
+    try:
+        result = tool(**kwargs)
+    except Exception:
+        result = None
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        return ["附近医院查询暂不可用，请自行联系当地急救或就近急诊；不要等待查询结果。"]
+    from agent.tool_input_boundary import hospital_data, label
+    data, hospitals = hospital_data(result.get("data"))
     if not hospitals:
         return []
     # 坐标模式（高德周边检索）：抬头带半径与排序说明，展示全部返回项（至多 5 家）；
@@ -287,7 +306,7 @@ def _nearby_hospital_lines(case_state):
         lines = [f"如你就近位于当前位置，{radius_km}km 内以下医院可前往（按直线距离由近到远）："]
         limit = 5
     else:
-        lines = [f"如你就近位于{city}，以下医院可前往："]
+        lines = [f"如你就近位于{label(city) or '所提供的地点'}，以下医院可前往："]
         limit = 3
     for item in hospitals[:limit]:
         detail = (item.get("district") or "").strip()
@@ -296,10 +315,15 @@ def _nearby_hospital_lines(case_state):
         if item.get("has_emergency"):
             detail += "，有急诊"
         lines.append(f"- {item.get('name', '')}（{detail}）" if detail else f"- {item.get('name', '')}")
-    # 数据来源说明由工具 note 提供（演示/高德/回退各不同），不硬编码
-    note = (data.get("note") or "").strip()
-    if note:
-        lines.append(f"（{note}）")
+    # Free-form tool notes have no authority over fixed safety text.
+    note = {"amap_nearby": "地图检索结果，距离为直线距离；请自行确认急诊服务。",
+            "amap": "地图城市检索结果，请自行确认急诊服务。",
+            "demo": "演示数据，非真实地图信息，请自行核实。",
+            "demo_fallback": "外部数据源不可用，以下为本地演示列表，请自行核实。",
+            "amap_fallback": "地图检索不可用，以下为本地演示列表，请自行核实。",
+            "amap_nearby_fallback": "地图检索不可用，以下为本地演示列表，请自行核实。"}.get(
+                data['source'], "工具提供的参考列表，请自行核实；不要等待查询结果而延误就医。")
+    lines.append(f"（{note}）")
     return lines
 
 
@@ -359,10 +383,10 @@ def _retrieve_corpus_hits(case_state, plan):
         retrieval = search_knowledge(query, top_k=6)
     except Exception:
         return []
-    return [
-        hit for hit in retrieval.get("hits", [])
-        if hit.get("type") == "corpus" and hit.get("content")
-    ][:3]
+    from agent.tool_input_boundary import corpus_hits
+    if not isinstance(retrieval, dict):
+        return []
+    return corpus_hits(retrieval.get("hits", []))[:3]
 
 
 # 回复注入：把方剂/调护/FAQ 语料参考行附在最终建议末尾
@@ -386,6 +410,40 @@ def _knowledge_context_text(case_state, plan):
     if not corpus_hits:
         return "无"
     return "\n".join(f"【{hit['name']}】{hit['content']}" for hit in corpus_hits)
+
+
+def build_requested_progress_action_result(memory, plan):
+    from agent.router import ActionResult
+    from agent.response_context import grounded_progress
+    from agent.tool_input_boundary import corpus_hits
+    state=memory.get_case_state()
+    text=grounded_progress(state,plan)
+    if state.get('pulse_declined'):text+='\n已记录你暂不做脉诊。'
+    gap=state.get('delivery_recovery') or {}
+    if gap.get('kind')=='missing_deferred_candidate':text+='\n待确认：'+gap['question']
+    unresolved=(state.get('contradictions') or [])
+    if unresolved:text+='\n尚未确认的冲突：'+'；'.join(unresolved[:3])+'。'
+    audit=dict(version='requested_retrieval_v1',triggered=False,status='not_requested',accepted_hits=0)
+    if plan.get('requested_references'):
+        query=' '.join(p['value'] for p in (state.get('fact_view') or {}).get('problems',[])[:3]) or state.get('chief_complaint','')
+        if query:
+            audit.update(triggered=True,query=query)
+            try:
+                result=search_knowledge(query,top_k=6)
+                if not isinstance(result,dict):raise ValueError('invalid tool result')
+                raw=result.get('hits',[])
+                hits=corpus_hits(raw)[:3]
+                audit.update(status='ok' if hits else 'empty_or_untrusted',accepted_hits=len(hits),raw_hits=len(raw) if isinstance(raw,list) else None)
+            except Exception as exc:
+                hits=[];audit.update(status='error',error_type=type(exc).__name__)
+            if hits:
+                text+='\n\n知识库参考（演示资料，不替代医师判断）：\n'+'\n'.join(
+                    f"- {hit['name']}：{hit['content']}（来源：{hit['source']}）" for hit in hits)
+            else:text+='\n未获得可核实的资料，本轮不提供资料引用。'
+        else:
+            audit['status']='no_grounded_query';text+='\n尚无足够明确的信息用于资料检索，未提供资料引用。'
+    memory.case_state['delivery_tool_audit']=audit
+    return ActionResult('summarize_progress',text,'COLLECTING_INFO',False,list(plan.get('missing_slots',[])),render_mode='final')
 
 
 # 信息冲突澄清的结果构建
@@ -436,12 +494,21 @@ def build_request_pulse_input_action_result(case_state, plan):
 def build_followup_single_action_result(case_state, plan):
     from agent.router import ActionResult
 
+    if plan.get('fact_confirmation'):
+        return ActionResult(name='ask_followup_single', response=plan['fact_confirmation']['question'],
+            status='COLLECTING_INFO', is_final=False, missing_slots=list(plan.get('missing_slots', [])),
+            followup_slot='fact_confirmation', render_mode='followup')
+
     missing_slots = list(plan.get("missing_slots", []))
-    slot_name = missing_slots[0] if missing_slots else ""
+    target_fields = plan.get("question_target_fields", missing_slots[:1])
+    slot_name = target_fields[0] if target_fields else ""
     variants = FOLLOWUP_VARIANTS.get(slot_name, ["请再补充一些与这次不适相关的细节。"])
     counts = case_state.get("followup_counts", {})
     attempt = counts.get(slot_name, 0)
     question = variants[min(attempt, len(variants) - 1)]
+    if case_state.get('semantic_contract') and case_state.get('current_focus_label') and slot_name in {'duration', 'severity', 'location', 'pain_character'}:
+        label = TCM_SLOT_LABELS.get(slot_name, slot_name)
+        question = f"关于{case_state['current_focus_label']}，请补充{label}。"
 
     if slot_name == "location" and case_state.get("chief_complaint"):
         question = f"{case_state['chief_complaint']}主要出现在哪个部位？请尽量具体描述。"
@@ -464,9 +531,9 @@ def build_followup_bundle_action_result(case_state, plan):
     from agent.router import ActionResult
 
     missing_slots = list(plan.get("missing_slots", []))
-    focus_slots = missing_slots[:3]
+    focus_slots = plan.get("question_target_fields", missing_slots[:3])
     labels = [TCM_SLOT_LABELS.get(slot, slot) for slot in focus_slots]
-    chief_complaint = case_state.get("chief_complaint") or "这次不适"
+    chief_complaint = case_state.get('current_focus_label') or case_state.get("chief_complaint") or "这次不适"
     focus = "、".join(plan.get("four_diagnosis_focus", {}).keys()) or "问诊"
     response = (
         f"为了把{chief_complaint}问得更完整，我还需要你补充"
@@ -486,10 +553,100 @@ def build_followup_bundle_action_result(case_state, plan):
 # 根据行动结果的render_mode
 # 如果是followup，生成一个针对性的追问，帮助用户补充信息，形成更完整的问诊上下文
 # 如果是final，生成一个总结性的回复，帮助用户理解当前的问诊结果
-def render_response(llm, memory, action_result, case_state, risk_result, guideline_result, plan):
+def red_flag_correction_notice(case_state):
+    """Acknowledge accepted corrections; resolution alone is not a correction."""
+    if case_state.get('fact_extraction_error'):
+        return ''
+    ledger=case_state.get('fact_ledger') or {};turns=ledger.get('turns') or []
+    if not turns:return ''
+    records={r['id']:r for r in ledger.get('records',[])}
+    delta=turns[-1].get('normalized_delta') or {}
+    for fact in delta.get('facts',[]):
+        prior=records.get(fact.get('replaces')) or {}
+        if (fact.get('operation')=='correct' and fact.get('field')=='red_flags'
+            and fact.get('polarity')=='negated' and fact.get('subject')=='patient'
+            and fact.get('temporality')=='current' and prior.get('polarity')=='present'):
+            return '已记录你对先前描述的更正，并按当前有效信息重新评估；如出现紧急不适仍请及时线下就医。\n'
+    return ''
+
+
+def render_response(llm, memory, action_result, case_state, risk_result, guideline_result, plan,
+                    *, responder=None, response_mode='legacy'):
+    # Safety disposition must survive the real response path, regardless of the
+    # extractor's last provider or a generative model's paraphrase.
+    if risk_result.get("risk") == "HIGH":
+        if action_result.name != "risk_escalation":
+            raise ValueError("HIGH response requires risk_escalation")
+        return action_result.response
+    if action_result.name == "risk_escalation":
+        return action_result.response
+    if action_result.name in {'acknowledge_pause','clarify_interaction_request','provide_hospital_options'}:
+        return action_result.response
+    if action_result.name=='summarize_progress' and plan.get('requested_progress'):
+        return action_result.response
+    if plan.get('input_clarification'):return action_result.response
+    if response_mode == 'template' or case_state.get('fact_extraction_error'):
+        return action_result.response
+    if response_mode not in {'legacy', 'model'} or (response_mode == 'model' and responder is None):
+        raise ValueError('invalid responder configuration')
+    if response_mode == 'model' and case_state.get('semantic_contract'):
+        if action_result.name == 'request_pulse_input':
+            return action_result.response
+        from dataclasses import asdict
+        from agent.response_context import build, byte_budget, preserve_knowledge_block, VERSION, GROUPED_VERSION, DENIAL_VERSION
+        context_version = getattr(responder, 'context_version', 'v2')
+        if context_version in {'v3','v4'} and action_result.name == 'summarize_progress':
+            from agent.response_context import grounded_progress
+            memory.case_state['semantic_response_audit'] = {
+                'version': DENIAL_VERSION if context_version == 'v4' else GROUPED_VERSION, 'status': 'grounded_template',
+                'reason': 'per_problem_attributes_and_selected_plan_only',
+                'model_calls': 0}
+            return grounded_progress(case_state, plan)
+        serialized = build(memory, action_result, case_state, risk_result, guideline_result, plan,
+                           version=context_version)
+        output_tokens = getattr(getattr(responder, 'config', None), 'max_tokens', 512)
+        audit = {'version': {'v3':GROUPED_VERSION,'v4':DENIAL_VERSION}.get(context_version, VERSION),
+                 'budget': byte_budget(serialized, output_tokens), 'status': 'fallback'}
+        memory.case_state['semantic_response_audit'] = audit
+        measure = getattr(responder, 'input_budget', None)
+        if measure is not None:
+            try:
+                audit['conservative_budget'] = audit['budget']
+                audit['budget'] = measure(serialized, output_tokens)
+            except Exception as exc:
+                audit['reason'] = 'tokenizer_budget_unavailable'
+                audit['budget_error_type'] = type(exc).__name__
+                return action_result.response
+        if not audit['budget']['within_limit']:
+            audit['reason'] = 'context_budget_no_clinical_truncation'
+            return action_result.response
+        result = responder.call(serialized)
+        audit['model_result'] = asdict(result)
+        response = result.content.strip() if result.ok else ''
+        if not response or response == '{}':
+            audit['reason'] = 'provider_or_empty_response'
+            return action_result.response
+        if getattr(responder, 'fact_guard_version', None) == 'denial_v1':
+            from agent.response_fact_guard import unsupported_denials, VERSION as GUARD_VERSION
+            unsupported = unsupported_denials(response, case_state)
+            audit['fact_guard'] = {'version': GUARD_VERSION, 'unsupported_denials': unsupported}
+            if unsupported:
+                audit['reason'] = 'unsupported_current_symptom_denial'
+                return action_result.response
+        audit['status'] = 'model'
+        if action_result.render_mode == 'final':
+            response = preserve_knowledge_block(response, action_result.response)
+            return _ensure_hospital_lines(response, action_result.response)
+        return response
+    def generate(prompt):
+        if response_mode == 'legacy':
+            return llm.call(prompt).strip()
+        result = responder.call([{'role': 'system', 'content': '按既定行动生成清楚的问诊回复，不新增诊断或事实。'},
+                                 {'role': 'user', 'content': prompt}])
+        return result.content.strip() if result.ok else ''
     conversation_context = memory.get_prompt_context_text()
     profile_context = memory.get_profile_context_text()
-    if llm.last_provider_used in {"deepseek", "openai"}:
+    if response_mode == 'model' or llm.last_provider_used in {"deepseek", "openai"}:
         # 脉诊请求直出确定性文案：LLM 重写实测会把脉诊请求改写成雷同追问，语义丢失
         if action_result.name == "request_pulse_input":
             return action_result.response
@@ -502,7 +659,7 @@ def render_response(llm, memory, action_result, case_state, risk_result, guideli
                 profile_context=profile_context,
                 conversation_context=conversation_context,
             )
-            response = llm.call(prompt).strip()
+            response = generate(prompt)
             if response and response != "{}":
                 return response
 
@@ -518,7 +675,7 @@ def render_response(llm, memory, action_result, case_state, risk_result, guideli
                 profile_context=profile_context,
                 conversation_context=conversation_context,
             )
-            response = llm.call(prompt).strip()
+            response = generate(prompt)
             if response and response != "{}":
                 return _ensure_hospital_lines(response, action_result.response)
 

@@ -3,7 +3,8 @@ from tools.protocol import managed_tool
 
 # 工具版本：风险规则迭代时升级，便于历史会话追溯当时使用的规则版本
 # 1.1：规则从代码硬编码迁移至 knowledge/data/risk_rules.json（声明式解释执行）
-TOOL_VERSION = "1.1"
+# 1.2：可选症状-严重度关联；未传入该映射时保持旧扁平状态行为
+TOOL_VERSION = "1.2"
 
 
 @managed_tool("risk_assessment", TOOL_VERSION, "基于规则的安全风险评估，输出 HIGH/MEDIUM/LOW/UNKNOWN")
@@ -28,7 +29,8 @@ def risk_assessment_tool(case_state):
 
     # 按 knowledge/data/risk_rules.json 的顺序逐条解释，命中即返回
     for rule in get_risk_rules():
-        if _rule_matches(rule, symptoms, accompanying, severity, past_history, age):
+        if _rule_matches(rule, symptoms, accompanying, severity, past_history, age,
+                         case_state.get("severity_by_symptom")):
             return _result(
                 rule["risk"],
                 rule["reason"],
@@ -57,7 +59,7 @@ def risk_assessment_tool(case_state):
 
 # 声明式条件解释器：when 中所有条件同时满足才算命中
 # 支持的症状池：symptoms / symptoms∪accompanying_symptoms（union_any）
-def _rule_matches(rule, symptoms, accompanying, severity, past_history, age):
+def _rule_matches(rule, symptoms, accompanying, severity, past_history, age, severity_by_symptom=None):
     when = rule.get("when", {})
 
     if "symptoms_all" in when and not all(item in symptoms for item in when["symptoms_all"]):
@@ -70,6 +72,10 @@ def _rule_matches(rule, symptoms, accompanying, severity, past_history, age):
             return False
     if "severity_in" in when and severity not in when["severity_in"]:
         return False
+    if "severity_in" in when and severity_by_symptom is not None:
+        targets = when.get("symptoms_all", when.get("symptoms_any", []))
+        if targets and not any(severity_by_symptom.get(name) in when["severity_in"] for name in targets):
+            return False
     if "past_history_any" in when and not past_history.intersection(when["past_history_any"]):
         return False
     if "age_gte" in when and (age is None or age < when["age_gte"]):

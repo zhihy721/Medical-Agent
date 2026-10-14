@@ -142,8 +142,7 @@ TCM_FIELD_PATTERNS = {
 }
 
 DURATION_REGEXES = [
-    re.compile(r"(\d+\s*(分钟|小时|天|周|个月))"),
-    re.compile(r"(半小时|半天|一天|两天|三天|一周|一个月)"),
+    re.compile(r"((?:\d+|[一二两三四五六七八九十百]+|半)\s*(?:分钟|小时|天|周|个月))"),
 ]
 
 AGE_PATTERN = re.compile(r"(\d{1,3})\s*岁")
@@ -207,8 +206,11 @@ def _find_labels_with_negation(text, mapping):
 
 def _extract_duration(text):
     for pattern in DURATION_REGEXES:
-        match = pattern.search(text)
-        if match:
+        for match in pattern.finditer(text):
+            # Keep the affirmed correction, not the old duration explicitly denied.
+            prefix = text[max(0, match.start() - 6):match.start()]
+            if re.search(r"(?:不是|并非)\s*$", prefix):
+                continue
             return match.group(1)
     return ""
 

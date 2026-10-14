@@ -1,8 +1,9 @@
 from pathlib import Path
+import os
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = PROJECT_ROOT / "config.env"
+CONFIG_PATH = Path(os.getenv('MEDICAL_AGENT_CONFIG_PATH') or PROJECT_ROOT / 'config.env')
 
 DEFAULT_CONFIG = {
     "LLM_PROVIDER": "deepseek",

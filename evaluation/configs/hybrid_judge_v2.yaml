@@ -1,0 +1,20 @@
+version: hybrid_judge_v2_development_candidate
+rubric: evaluation/judge_rubric_v2.md
+frozen_for_formal_eval: false
+max_cost_cny: 2.0
+price_note: "Conservative accounting reference for budget reservation, not current billing tariff or FX conversion. Official page checked 2026-10-02 reports USD peak prices 1.32/0.044/3.96 per 1M uncached-input/cached-input/output. Actual account invoice is authoritative; preserve usage separately."
+price_source: https://api-docs.deepseek.com/quick_start/pricing/
+roles:
+  judge:
+    provider: deepseek
+    model_id: deepseek-v4-pro
+    api_url: https://api.deepseek.com/chat/completions
+    api_key_env: DEEPSEEK_API_KEY
+    timeout_s: 90
+    max_tokens: 1024
+    temperature: 0
+    max_total_tokens: 200000
+    enable_thinking: false
+    input_cny_per_million: 12.0
+    cached_input_cny_per_million: 0.5
+    output_cny_per_million: 40.0

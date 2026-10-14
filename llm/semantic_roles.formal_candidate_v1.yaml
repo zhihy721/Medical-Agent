@@ -1,0 +1,42 @@
+# Opt-in evaluation candidate, not default or production promotion.
+roles:
+  intent:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 30
+    max_tokens: 512
+    temperature: 0
+    enable_thinking: false
+  extractor:
+    provider: vllm
+    model_id: extractor-formal-epoch2
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 90
+    max_tokens: 1536
+    temperature: 0
+    enable_thinking: false
+  responder:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 60
+    max_tokens: 512
+    temperature: 0
+    enable_thinking: false
+  planner:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 60
+    max_tokens: 512
+    temperature: 0
+    enable_thinking: false
+  reviewer:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 60
+    max_tokens: 512
+    temperature: 0
+    enable_thinking: false

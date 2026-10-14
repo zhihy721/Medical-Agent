@@ -1,0 +1,22 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+test('desktop labels distinguish rule, old SFT and all three G6 role configurations', () => {
+  const context = vm.createContext({});
+  vm.runInContext(fs.readFileSync(path.join(__dirname, 'ui/runtime-labels.js'), 'utf8'), context);
+  assert.match(context.medicalRuntimeLabel('rule'), /Mock/);
+  assert.match(context.medicalRuntimeLabel('sft'), /旧抽取SFT/);
+  assert.match(context.medicalRuntimeLabel('g6-rule'), /规则规划与检查/);
+  assert.match(context.medicalRuntimeLabel('g6-plan'), /Qwen规划 · 规则检查/);
+  assert.match(context.medicalRuntimeLabel('g6-review'), /Qwen规划与检查/);
+  assert.match(context.medicalRuntimeLabel('full888-rule'), /Full888抽取 · 规则/);
+  assert.match(context.medicalRuntimeLabel('full888-plan'), /Qwen规划 · 规则/);
+  assert.match(context.medicalRuntimeLabel('full888-review'), /Qwen规划与检查/);
+  assert.match(context.medicalRuntimeLabel('qwen-grounded'), /请求依据校验/);
+  assert.equal(context.medicalRuntimeLabel('full888-not-released'), '未知运行配置');
+  const html = fs.readFileSync(path.join(__dirname, 'ui/index.html'), 'utf8');
+  assert.ok(html.indexOf('runtime-labels.js') < html.indexOf('client.js'));
+});

@@ -3,6 +3,7 @@ import os
 import threading
 import time
 import uuid
+import json
 from collections import OrderedDict
 
 from flask import Flask, Response, jsonify, render_template, request, session
@@ -20,6 +21,7 @@ from llm.prompt import SYSTEM_PROMPT
 from memory.memory import ConversationMemory
 from memory.profile_store import InMemoryProfileStore, JsonFileProfileStore
 from memory.session_store import InMemorySessionStore, JsonFileSessionStore
+from memory.rollout_store import RolloutSessionStore
 from observability.events import event_logger, setup_events
 from observability.logger import setup_logging
 from observability.metrics import summarize_events
@@ -71,7 +73,9 @@ class SessionCache:
             entry = self._entries.get(session_id)
             if entry is None:
                 while len(self._entries) >= self._max:
-                    self._entries.popitem(last=False)
+                    victim=next((sid for sid,item in self._entries.items() if not item['lock'].locked()),None)
+                    if victim is None:raise RuntimeError('所有会话正在处理，请稍后重试。')
+                    self._entries.pop(victim)
                 entry = {"agent": factory(), "lock": threading.Lock(), "last_access": now}
                 self._entries[session_id] = entry
             else:
@@ -81,14 +85,15 @@ class SessionCache:
 
     def remove(self, session_id):
         with self._mu:
-            self._entries.pop(session_id, None)
+            entry=self._entries.get(session_id)
+            if entry is not None and not entry['lock'].locked():self._entries.pop(session_id,None)
 
     def clear(self):
         with self._mu:
-            self._entries.clear()
+            self._entries=OrderedDict((sid,item) for sid,item in self._entries.items() if item['lock'].locked())
 
     def _evict_expired(self, now):
-        expired = [sid for sid, entry in self._entries.items() if now - entry["last_access"] > self._ttl]
+        expired = [sid for sid, entry in self._entries.items() if now - entry["last_access"] > self._ttl and not entry['lock'].locked()]
         for sid in expired:
             self._entries.pop(sid, None)
 
@@ -102,7 +107,7 @@ session_cache = SessionCache()
 _config = read_config()
 _data_dir = _config.get("DATA_DIR", "data")
 profile_store = JsonFileProfileStore(data_dir=f"{_data_dir}/profiles")
-session_store = JsonFileSessionStore(data_dir=f"{_data_dir}/sessions")
+session_store = RolloutSessionStore(data_dir=f"{_data_dir}/sessions")
 
 # 初始化统一日志与 JSONL 事件流
 _log_dir = _config.get("LOG_DIR", "logs")
@@ -184,6 +189,8 @@ def _get_agent():
         session["session_id"] = session_id
 
     def _factory():
+        from agent.policy_config import policy_from_environment, extraction_from_environment
+
         memory = ConversationMemory(
             profile_store=profile_store,
             user_id=user_id,
@@ -195,6 +202,8 @@ def _get_agent():
             memory=memory,
             runtime=agent_runtime,
             thread_id=session_id,
+            decision_policy=policy_from_environment(),
+            **extraction_from_environment(),
         )
 
     return session_cache.get_or_create(session_id, _factory)
@@ -323,15 +332,49 @@ def api_voice_tts():
 def _conversation_messages(agent):
     """把会话历史映射为前端可回放的 [{role, content}] 列表。
 
-    供刷新页面后恢复聊天记录：memory.history 已随会话文件持久化，
+    供刷新页面后恢复完整归档；模型使用的 memory.history 另有窗口限制，
     读取需在会话锁内进行，由调用方保证。
     """
-    history = getattr(agent.memory, "history", None) or []
-    return [
-        {"role": role, "content": content}
-        for role, content in history
-        if content
-    ]
+    return [{"role": m['role'], "content": m['content']}
+            for m in agent.memory.get_archived_messages() if m['content']]
+
+
+def _claim_chat_request(payload, text, coords, streaming=False):
+    request_id = payload.get('request_id')
+    if request_id is None:
+        return None, None  # Existing web clients remain compatible.
+    sid, owner = session['session_id'], session['user_id']
+    try:
+        record = session_store.claim_request(sid, owner, request_id, dict(message=text, coords=coords))
+    except ValueError as exc:
+        return None, (jsonify(message=str(exc)), 409)
+    if not record['claimed']:
+        if record['status'] == 'completed':
+            result = dict(record['result'], request_id=request_id, replayed=True)
+            if streaming:
+                return None, Response(json.dumps(result, ensure_ascii=False)+'\n',
+                                      mimetype='application/x-ndjson', headers={'Cache-Control': 'no-store'})
+            result.pop('kind', None)
+            return None, jsonify(result)
+        return None, (jsonify(message='同一次请求已接收，不能重复执行。请查询请求状态；完成状态不明时不要自动重发。',
+                               request_id=request_id, request_status=record['status']), 409)
+    def finish(status, result):
+        if result is not None:
+            result['request_id'] = request_id
+        session_store.finish_request(sid, request_id, status, result)
+    return finish, None
+
+
+@app.get('/chat/requests/<request_id>')
+def chat_request_status(request_id):
+    # Never accepts a thread/owner from the caller: current cookie scope only.
+    if not session.get('session_id') or not session.get('user_id'):
+        return jsonify(message='当前会话没有该请求'), 404
+    try:
+        record = session_store.get_request(session['session_id'], session['user_id'], request_id)
+    except ValueError:
+        return jsonify(message='请求不可读取'), 404
+    return jsonify(record) if record else (jsonify(message='当前会话没有该请求'), 404)
 
 
 @app.route("/status", methods=["GET"])
@@ -376,13 +419,14 @@ def chat():
     try:
         entry = _get_agent()
         agent = entry["agent"]
+        finish, early = _claim_chat_request(payload, user_input, user_coords)
+        if early is not None:return early
         # 同一会话串行化：避免并发请求互相覆盖 case_state 与会话文件
         with entry["lock"]:
             response = agent.run(user_input, user_coords=user_coords)
             snapshot = agent.get_case_snapshot()
             messages = _conversation_messages(agent)
-        return jsonify(
-            {
+        result = {
                 "response": response,
                 "case_state": snapshot,
                 "messages": messages,
@@ -392,8 +436,10 @@ def chat():
                 "config_status": get_config_status(),
                 "metrics": llm.get_metrics(),
             }
-        )
+        if finish:finish('completed',result)
+        return jsonify(result)
     except Exception as exc:
+        if 'finish' in locals() and finish:finish('failed', {'response':'系统处理失败，已保留会话记录。'})
         return jsonify({"response": f"系统处理失败: {exc}"}), 500
 
 
@@ -403,6 +449,31 @@ def api_get_profile():
     if not user_id:
         return jsonify({"ok": False, "message": "当前无活跃用户"}), 400
     return jsonify(_profile_response(user_id))
+
+
+@app.route('/chat/stream',methods=['POST'])
+def chat_stream():
+    # Opt-in transport. Default /chat and desktop route selection stay explicit.
+    from agent.safety_stream import stream_response
+    payload=request.get_json(silent=True) or {}
+    text=payload.get('message','')
+    if not isinstance(text,str) or not text.strip():
+        return jsonify(response='请输入有效的症状描述或问题。'),400
+    coords=None
+    try:
+        latitude=float(payload.get('latitude'));longitude=float(payload.get('longitude'))
+        if -90<=latitude<=90 and -180<=longitude<=180:
+            coords=dict(latitude=latitude,longitude=longitude)
+    except (TypeError,ValueError):pass
+    entry=_get_agent()  # Resolve cookie session before lazy iteration starts.
+    finish, early = _claim_chat_request(payload, text.strip(), coords, streaming=True)
+    if early is not None:return early
+    def final_payload(agent,response):
+        snapshot=agent.get_case_snapshot()
+        return dict(response=response,case_state=snapshot,messages=_conversation_messages(agent),
+            llm_status=snapshot.get('llm_status',{}),llm_degraded=bool(snapshot.get('llm_status',{}).get('degraded')),
+            agent_runtime=getattr(agent,'runtime_name',agent_runtime),config_status=get_config_status(),metrics=llm.get_metrics())
+    return stream_response(entry,text.strip(),coords,final_payload,request_finish=finish)
 
 
 @app.route("/api/profile", methods=["POST"])

@@ -31,3 +31,41 @@ jobs:
 
       - name: Run evaluation suite
         run: python evaluation/run_eval.py
+
+      - name: Run portable Python unit tests
+        run: |
+          python -m unittest discover -s llm -t . -p "test_*.py"
+          python -m unittest discover -s memory -t . -p "test_*.py"
+          python -m unittest discover -s agent -t . -p "test_*.py"
+          python -m unittest discover -s evaluation -t . -p "test_*.py"
+          python -m unittest discover -s training -t . -p "test_*.py"
+          python -m unittest discover -s inference -t . -p "test_*.py"
+          python -m unittest discover -s desktop -t . -p "test_*.py"
+
+      - name: Set up Node.js for transport and desktop unit tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run portable JavaScript unit tests
+        run: node --test desktop/test_ui.cjs desktop/test_recovery.cjs agent/test_chat_stream.cjs
+
+  desktop-tests:
+    runs-on: windows-latest
+    env:
+      LLM_PROVIDER: mock
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Create the Python workspace required by the desktop client
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+      - name: Test owned backend lifecycle and desktop transport
+        run: node --test desktop/test_lifecycle.cjs desktop/test_ui.cjs desktop/test_recovery.cjs agent/test_chat_stream.cjs

@@ -860,6 +860,7 @@
         </section>
     </main>
 
+    <script src="{{ url_for('static', filename='chat_stream.js') }}"></script>
     <script>
         const setupView = document.getElementById("setup-view");
         const appView = document.getElementById("app-view");
@@ -1364,7 +1365,12 @@
             document.getElementById("risk-banner").classList.toggle("hidden", level !== "HIGH");
 
             document.getElementById("case-summary").textContent = caseState.summary || "等待输入";
-            document.getElementById("runtime-summary").textContent = `runtime: ${agentRuntime}`;
+            const policy = caseState.decision_policy;
+            const roleName = role => role.provider === "rule" ? "规则" : role.model_id;
+            const fallback = (caseState.decision_audit || []).some(item => item.fallback_used);
+            document.getElementById("runtime-summary").textContent = policy
+                ? `规划：${roleName(policy.planner)} · 复核：${roleName(policy.reviewer)}${fallback ? " · 本轮发生规则回退" : ""}`
+                : `runtime: ${agentRuntime}`;
             renderLlmStatus(llmStatus || caseState.llm_status || {}, configStatus);
             renderQuickPicks(caseState);
         }
@@ -1405,6 +1411,8 @@
                     return `工具 ${event.tool} v${event.version} 耗时 ${event.elapsed_ms}ms${event.status === "error" ? "（失败）" : ""}`;
                 case "plan":
                     return `决定动作: ${event.next_action}`;
+                case "decision_gate":
+                    return `动作校验: ${event.proposed_action || "规则"} → ${event.effective_action}${event.rule_override_reason ? `（${event.rule_override_reason}）` : ""}`;
                 case "review":
                     return event.needs_replan ? `自检改判: ${event.suggested_action}` : "自检通过";
                 case "risk_assessed":
@@ -1623,12 +1631,16 @@
 
             try {
                 const payload = userCoords ? { message, ...userCoords } : { message };
-                const response = await fetch("/chat", {
+                const streamSafety = new URLSearchParams(window.location.search).get('safety_stream') === '1';
+                const response = await fetch(streamSafety ? '/chat/stream' : '/chat', {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(payload)
                 });
-                const data = await response.json();
+                const data = await readChatResponse(response, notice => {
+                    removeThinking();
+                    addMessage(notice, 'bot');
+                });
                 removeThinking();
                 if (Array.isArray(data.messages)) {
                     // 以服务端历史整体回放，保证与持久化状态一致

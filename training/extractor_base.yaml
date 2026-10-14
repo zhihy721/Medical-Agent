@@ -1,0 +1,9 @@
+roles:
+  extractor:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 60
+    max_tokens: 1024
+    temperature: 0
+    enable_thinking: false

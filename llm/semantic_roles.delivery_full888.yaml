@@ -1,0 +1,43 @@
+# Full888 delivery route with independently configured grounding guard.
+# Planner/Reviewer/Intent/Responder remain separate base-model roles.
+roles:
+  extractor:
+    provider: vllm
+    model_id: delivery-4b-full888
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 120
+    max_tokens: 1536
+    temperature: 0
+    enable_thinking: false
+  intent:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 60
+    max_tokens: 512
+    temperature: 0
+    enable_thinking: false
+  planner:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 60
+    max_tokens: 512
+    temperature: 0
+    enable_thinking: false
+  reviewer:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 60
+    max_tokens: 512
+    temperature: 0
+    enable_thinking: false
+  responder:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 60
+    max_tokens: 512
+    temperature: 0
+    enable_thinking: false

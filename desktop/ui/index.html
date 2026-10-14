@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Medical Agent · 问诊工作台</title><link rel="stylesheet" href="/desktop/assets/style.css"><script src="/static/chat_stream.js" defer></script><script src="/desktop/assets/runtime-labels.js" defer></script><script src="/desktop/assets/client.js" defer></script></head>
+<body>
+<aside class="sidebar"><div class="brand"><span class="logo">M</span><div>Medical Agent<small>问诊工作台</small></div></div>
+<button id="new" class="new">＋ 新问诊</button><div class="section-label">我的问诊</div><nav id="sessions" aria-label="问诊会话"></nav>
+<div class="sidebar-bottom"><button id="profile-open" class="plain">个人信息</button><div class="connection"><span id="dot"></span><span id="connection">正在连接</span></div></div></aside>
+<main><header><div><h1 id="title">新问诊</h1><span id="mode" class="muted">正在加载</span></div><span id="risk" class="badge">等待信息</span></header>
+<div id="notice" role="status" hidden></div>
+<section id="messages" aria-live="polite" aria-label="问诊对话"><div class="welcome"><div class="welcome-mark">M</div><h2>从这次不舒服的地方说起</h2><p>可以同时描述几个问题、持续时间，以及你最想先了解哪一个。</p><div class="example">例如：咳嗽三天，头疼一天，今天想先问头痛。</div></div></section>
+<form id="composer"><label class="sr-only" for="input">症状或问题</label><textarea id="input" placeholder="描述你的症状或补充信息…" rows="2" maxlength="12000"></textarea><div class="composer-bottom"><span id="working">Enter 发送 · Shift+Enter 换行</span><button id="recover" type="button" hidden>查询发送状态</button><button id="send" type="submit">发送 ↑</button></div></form>
+<footer>问诊工程演示，仅供信息整理与分诊参考，不能替代医生诊疗。</footer></main>
+<aside class="inspector"><div class="inspector-title">本次问诊</div><div class="tabs"><button id="facts-tab" class="active">事实</button><button id="trace-tab">流程</button></div>
+<section id="facts-panel"><div class="section-label">主要咨询与当前焦点</div><div id="focus" class="summary">尚未明确</div><div class="section-label">记录的事实</div><div id="facts" class="facts"><p class="muted">发送消息后显示</p></div><div class="section-label">下一步</div><div id="action" class="summary">等待首轮信息</div></section>
+<section id="trace-panel" hidden><p class="muted">显示本次会话的实际节点与工具记录。</p><div id="trace"></div></section></aside>
+<dialog id="profile-dialog"><form id="profile-form"><h2>个人信息</h2><p class="muted">保存在本机，可在之后的问诊中恢复。</p><label>年龄<input id="age" type="number" min="0" max="120"></label><label>性别<select id="sex"><option value="">未填写</option><option>男</option><option>女</option></select></label><label>既往史<textarea id="history" rows="3" placeholder="多项用逗号分隔"></textarea></label><div class="dialog-actions"><button id="profile-close" type="button" class="plain">取消</button><button type="submit">保存</button></div><p id="profile-notice" role="status"></p></form></dialog>
+</body></html>

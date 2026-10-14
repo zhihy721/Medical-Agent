@@ -19,9 +19,14 @@ except ImportError:
     requests = None
 
 
+class LLMCallError(RuntimeError):
+    """A real provider failed while strict evaluation was enabled."""
+
+
 class LLM:
-    def __init__(self, system_prompt=None, provider=None):
+    def __init__(self, system_prompt=None, provider=None, strict=False):
         self.system_prompt = system_prompt or ""
+        self.strict = bool(strict)
         self.provider = (provider or os.getenv("LLM_PROVIDER", "deepseek")).lower()
         self.last_provider_used = "mock"
         self.last_error = ""
@@ -69,6 +74,7 @@ class LLM:
 
     def call(self, prompt):
         self.last_error = ""
+        self._last_usage = {}
         started = time.perf_counter()
         fallback = False
 
@@ -81,7 +87,19 @@ class LLM:
                 return result
             except Exception as exc:
                 self.last_error = f"DeepSeek call failed: {exc}"
+                if self.strict:
+                    self.last_provider_used = "deepseek"
+                    self.degraded = False
+                    self._record_call(started, fallback=False)
+                    raise LLMCallError("DeepSeek provider failed in strict mode") from exc
                 _logger.warning("DeepSeek call failed, fallback to mock: %s", exc)
+
+        if self.strict:
+            self.last_provider_used = self.provider
+            self.last_error = self.last_error or "Real provider is not configured"
+            self.degraded = False
+            self._record_call(started, fallback=False)
+            raise LLMCallError("Real provider unavailable in strict mode")
 
         self.last_provider_used = "mock"
         fallback = True

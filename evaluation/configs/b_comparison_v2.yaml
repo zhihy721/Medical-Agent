@@ -1,0 +1,36 @@
+version: b_policy_comparison_v2
+prompt_version: v2
+extractor: rule_mock
+renderer: deterministic_template
+max_cost_cny: 10.0
+price_note: "2026-09-27 DeepSeek 官网人民币高峰单价；按 usage/cache 估算，可能高于空闲时段账单；本地只计 API 费，不含硬件电费。"
+price_source: https://api-docs.deepseek.com/zh-cn/quick_start/pricing/
+models:
+  qwen:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 30
+    max_tokens: 512
+    temperature: 0
+    max_total_tokens: 1000000
+    enable_thinking: false
+  deepseek:
+    provider: deepseek
+    model_id: deepseek-v4-pro
+    api_url: https://api.deepseek.com/chat/completions
+    api_key_env: DEEPSEEK_API_KEY
+    timeout_s: 60
+    max_tokens: 512
+    temperature: 0
+    max_total_tokens: 1000000
+    enable_thinking: false
+    input_cny_per_million: 9.0
+    cached_input_cny_per_million: 0.30
+    output_cny_per_million: 27.0
+variants:
+  rule_gate: {planner: rule, reviewer: rule}
+  qwen_plan: {planner: qwen, reviewer: rule}
+  qwen_plan_review: {planner: qwen, reviewer: qwen}
+  deepseek_plan: {planner: deepseek, reviewer: rule}
+  deepseek_plan_review: {planner: deepseek, reviewer: deepseek}

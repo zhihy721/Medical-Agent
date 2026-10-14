@@ -1,0 +1,45 @@
+# Local extractor, planner, and reviewer use the confirmed SSH tunnel at 127.0.0.1:8000.
+# Planner/reviewer task quality still requires the Stage B paired evaluation.
+# Stage C extraction adapters must not silently replace the planner/reviewer base model.
+# Keep API keys in environment variables or ignored config.env.
+roles:
+  extractor:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 30
+    max_tokens: 512
+    temperature: 0
+    max_total_tokens: 0
+    enable_thinking: false
+  planner:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 30
+    max_tokens: 512
+    temperature: 0
+    max_total_tokens: 0
+    enable_thinking: false
+  reviewer:
+    provider: vllm
+    model_id: qwen3.5-4b
+    api_url: http://127.0.0.1:8000/v1/chat/completions
+    timeout_s: 30
+    max_tokens: 512
+    temperature: 0
+    max_total_tokens: 0
+    enable_thinking: false
+  judge:
+    provider: deepseek
+    model_id: deepseek-v4-pro
+    api_url: https://api.deepseek.com/chat/completions
+    api_key_env: DEEPSEEK_API_KEY
+    timeout_s: 45
+    max_tokens: 800
+    temperature: 0
+    max_total_tokens: 100000
+    enable_thinking: false
+    input_cny_per_million: 9.0
+    cached_input_cny_per_million: 0.30
+    output_cny_per_million: 27.0

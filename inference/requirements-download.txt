@@ -1,0 +1,4 @@
+# Install only in the separate modelscope-download environment.
+# File revision/SHA metadata uses these SDK versions' legacy transport.
+modelscope==1.40.1
+modelscope-hub==0.4.5

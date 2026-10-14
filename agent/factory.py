@@ -27,7 +27,8 @@ def is_langgraph_available():
 
 # 创建Agent实例的工厂函数
 # 根据配置选择运行时并初始化相应的Agent
-def create_agent(llm, memory=None, runtime=None, thread_id=None):
+def create_agent(llm, memory=None, runtime=None, thread_id=None, decision_policy=None,
+                 fact_extractor=None, responder=None, response_mode=None):
     selected_runtime = (runtime or get_agent_runtime()).lower()
     memory = memory or ConversationMemory()
 
@@ -40,7 +41,8 @@ def create_agent(llm, memory=None, runtime=None, thread_id=None):
 
         from agent.graph import LangGraphMedicalAgent
 
-        agent = LangGraphMedicalAgent(llm=llm, memory=memory, thread_id=thread_id)
+        agent = LangGraphMedicalAgent(llm=llm, memory=memory, thread_id=thread_id, decision_policy=decision_policy,
+                                      fact_extractor=fact_extractor, responder=responder, response_mode=response_mode)
         agent.runtime_name = "langgraph"
         return agent
 
@@ -49,6 +51,8 @@ def create_agent(llm, memory=None, runtime=None, thread_id=None):
             f"Unsupported AGENT_RUNTIME={selected_runtime!r}. "
             "Expected 'langgraph' or 'classic'."
         )
+    if decision_policy is not None or fact_extractor is not None or responder is not None or response_mode is not None:
+        raise ValueError("Role-based decision policies require the LangGraph runtime")
 
     # Classic is now an explicit compatibility fallback rather than the main path.
     _logger.warning(

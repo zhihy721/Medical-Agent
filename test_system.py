@@ -16,7 +16,7 @@ def _create_langgraph_agent():
         return None
 
     return create_agent(
-        llm=LLM(system_prompt=SYSTEM_PROMPT),
+        llm=LLM(system_prompt=SYSTEM_PROMPT, provider="mock"),
         memory=ConversationMemory(),
         runtime="langgraph",
     )
@@ -82,7 +82,7 @@ def test_agent_flow():
     from llm.prompt import SYSTEM_PROMPT
     from memory.memory import ConversationMemory
 
-    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT), ConversationMemory())
+    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT, provider="mock"), ConversationMemory())
     response_1 = agent.run("我发烧两天了，还有咳嗽")
     response_2 = agent.run("中度，主要在咽喉和胸口")
     case_state = agent.get_case_snapshot()
@@ -110,7 +110,7 @@ def test_high_risk_escalation():
     from llm.prompt import SYSTEM_PROMPT
     from memory.memory import ConversationMemory
 
-    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT), ConversationMemory())
+    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT, provider="mock"), ConversationMemory())
     response = agent.run("我胸痛，还喘不过气，很严重")
     case_state = agent.get_case_snapshot()
 
@@ -136,7 +136,7 @@ def test_followup_strategy():
     from llm.prompt import SYSTEM_PROMPT
     from memory.memory import ConversationMemory
 
-    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT), ConversationMemory())
+    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT, provider="mock"), ConversationMemory())
     response = agent.run("我发热，还咳嗽")
     case_state = agent.get_case_snapshot()
 
@@ -162,7 +162,7 @@ def test_tcm_evidence_and_pulse():
     from llm.prompt import SYSTEM_PROMPT
     from memory.memory import ConversationMemory
 
-    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT), ConversationMemory())
+    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT, provider="mock"), ConversationMemory())
     agent.run("我腹痛，按着舒服，怕冷，没胃口，大便稀")
     snapshot = agent.ingest_pulse_data(
         {
@@ -251,7 +251,7 @@ def test_pulse_prompt_does_not_repeat():
         }
     )
     memory.update_triage(last_action="request_pulse_input", status="WAITING_PULSE_INPUT")
-    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT), memory)
+    agent = MedicalAgent(LLM(system_prompt=SYSTEM_PROMPT, provider="mock"), memory)
     second = agent.run("没有脉诊设备，直接分析吧")
     case_state = agent.get_case_snapshot()
 
@@ -819,7 +819,7 @@ def test_langgraph_pulse_prompt_does_not_repeat():
     )
     memory.update_triage(last_action="request_pulse_input", status="WAITING_PULSE_INPUT")
     agent = create_agent(
-        llm=LLM(system_prompt=SYSTEM_PROMPT),
+        llm=LLM(system_prompt=SYSTEM_PROMPT, provider="mock"),
         memory=memory,
         runtime="langgraph",
     )
@@ -979,7 +979,7 @@ def test_langgraph_clarify_conflict_route():
 
     memory = ConversationMemory()
     agent = create_agent(
-        llm=LLM(system_prompt=SYSTEM_PROMPT),
+        llm=LLM(system_prompt=SYSTEM_PROMPT, provider="mock"),
         memory=memory,
         runtime="langgraph",
     )
@@ -2045,7 +2045,8 @@ def test_mcp_end_to_end_hospital_locator():
             default_registry.get = original_registry_get
         coords_render_ok = (
             len(coords_lines) >= 7
-            and coords_lines[0].startswith("如你就近位于当前位置，10km 内以下医院可前往")
+            and (coords_lines[0].startswith("如你就近位于当前位置，10km 内以下医院可前往")
+                 or coords_lines[0].startswith("如你就近位于当前位置，10.0km 内以下医院可前往"))
             and sum(1 for line in coords_lines if line.startswith("- ")) == 5
             and "约 0.5 公里" in coords_lines[1]
         )

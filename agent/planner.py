@@ -10,6 +10,7 @@ from knowledge.tcm_knowledge import (
 )
 
 # Planner 决策阈值统一配置，避免魔法数字散落各处
+from llm.deferred_scope import pending_confirmation, confirmation_plan
 # 调整策略时只改这里，不需要动决策逻辑本身
 PLANNER_CONFIG = {
     # 置信度低于该值视为信息严重不足，即使收敛也要继续打包追问
@@ -88,7 +89,7 @@ class Planner:
         pending_questions = [TCM_SLOT_LABELS.get(slot, slot) for slot in missing_slots[:3]]
         should_request_pulse = self._should_request_pulse(case_state, risk_level, completion_score, missing_slots)
 
-        return {
+        plan = {
             "intent": "tcm_triage_with_pulse",
             "four_diagnosis_focus": self._build_four_diagnosis_focus(missing_slots),
             "missing_slots": missing_slots,
@@ -113,6 +114,10 @@ class Planner:
             "goal_progress": self._goal_progress(next_action, risk_level, missing_slots, should_request_pulse),
             "chief_complaint": case_state.get("chief_complaint", ""),
         }
+        candidate = pending_confirmation(case_state)
+        if candidate and risk_level != 'HIGH' and not contradictions:
+            plan = confirmation_plan(plan, candidate)
+        return plan
 
     # 自检当前行动结果是否合理，并给出改进建议
     # 防止Planner出现策略性错误
@@ -154,7 +159,7 @@ class Planner:
     # 判断还缺哪些关键槽位，并根据优先级排序，返回待补充的槽位列表和可以暂缓的槽位列表
     # 排序规则：证型定向证据槽位优先 > 追问次数少的优先 > 原始优先级顺序
     def _missing_slots(self, case_state, syndrome_candidates=None):
-        chief_complaint = case_state.get("chief_complaint", "")
+        chief_complaint = case_state.get("current_focus_label") or case_state.get("chief_complaint", "")
         priorities = list(GENERAL_TCM_PRIORITIES)
         priorities.extend(self._chief_complaint_priorities(chief_complaint))
         followup_counts = case_state.get("followup_counts", {})
@@ -163,6 +168,8 @@ class Planner:
         queue = []
         deferred = []
         for slot in priorities:
+            if slot == 'chief_complaint' and case_state.get('semantic_contract') and case_state.get('symptoms'):
+                continue
             if slot in queue:
                 continue
             if self._has_value(case_state.get(slot)):
@@ -262,7 +269,7 @@ class Planner:
             confidence = max(confidence, PLANNER_CONFIG["high_risk_confidence_floor"])
         if case_state.get("pulse_summary"):
             confidence += PLANNER_CONFIG["pulse_confidence_bonus"]
-        if not case_state.get("chief_complaint"):
+        if not case_state.get("chief_complaint") and not (case_state.get('semantic_contract') and case_state.get('symptoms')):
             confidence -= PLANNER_CONFIG["no_chief_complaint_penalty"]
         if contradictions:
             confidence -= PLANNER_CONFIG["contradiction_confidence_penalty"]
@@ -337,8 +344,10 @@ class Planner:
     # 避免“缺失队列为空但完成度很低”的口径差
     def _completion_score(self, case_state):
         key_slots = list(dict.fromkeys(
-            list(GENERAL_TCM_PRIORITIES) + self._chief_complaint_priorities(case_state.get("chief_complaint", ""))
+            list(GENERAL_TCM_PRIORITIES) + self._chief_complaint_priorities(case_state.get('current_focus_label') or case_state.get("chief_complaint", ""))
         ))
+        if case_state.get('semantic_contract') and case_state.get('symptoms'):
+            key_slots = [slot for slot in key_slots if slot != 'chief_complaint']
         if not key_slots:
             return 0.0
         filled = sum(1 for slot in key_slots if self._has_value(case_state.get(slot)))
